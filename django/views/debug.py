@@ -4,7 +4,6 @@ import sys
 import types
 from pathlib import Path
 
-from django import get_version
 from django.conf import settings
 from django.http import HttpResponse, HttpResponseNotFound
 from django.template import Context, Engine, TemplateDoesNotExist
@@ -15,6 +14,7 @@ from django.utils.datastructures import MultiValueDict
 from django.utils.encoding import force_text
 from django.utils.module_loading import import_string
 from django.utils.translation import gettext as _
+from django.utils.version import get_docs_version
 
 # Minimal Django templates engine to render the error templates
 # regardless of the project's TEMPLATES setting. Templates are
@@ -282,6 +282,7 @@ class ExceptionReporter:
                     unicode_str[max(start - 5, 0):min(end + 5, len(unicode_str))],
                     'ascii', errors='replace'
                 )
+        from django import get_version
 
         if self.request is None:
             user_str = None
@@ -507,8 +508,7 @@ def default_urlconf(request):
     with Path(CURRENT_DIR, 'templates', 'default_urlconf.html').open() as fh:
         t = DEBUG_ENGINE.from_string(fh.read())
     c = Context({
-        "version": _('.'.join(get_version().split('.')[:2])),
-        "version": '1.11'  # Hack for now, so we can test links to ensure they're functional.
+        "version": get_docs_version(),
     })
 
     return HttpResponse(t.render(c), content_type='text/html')
