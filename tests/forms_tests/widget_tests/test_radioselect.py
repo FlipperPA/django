@@ -1,4 +1,7 @@
+import datetime
+
 from django.forms import RadioSelect
+from django.test import override_settings
 
 from .base import WidgetTest
 
@@ -84,3 +87,46 @@ class RadioSelectTest(WidgetTest):
         </ul>
         """
         self.check_html(self.widget(choices=self.beatles), 'beatle', 'J', attrs={'id': 'bar'}, html=html)
+
+    def test_class_attrs(self):
+        """
+        The <ul> in the multiple_input.html widget template include the class
+        attribute.
+        """
+        html = """
+        <ul class="bar">
+        <li><label><input checked type="radio" class="bar" value="J" name="beatle" /> John</label></li>
+        <li><label><input type="radio" class="bar" value="P" name="beatle" /> Paul</label></li>
+        <li><label><input type="radio" class="bar" value="G" name="beatle" /> George</label></li>
+        <li><label><input type="radio" class="bar" value="R" name="beatle" /> Ringo</label></li>
+        </ul>
+        """
+        self.check_html(self.widget(choices=self.beatles), 'beatle', 'J', attrs={'class': 'bar'}, html=html)
+
+    @override_settings(USE_L10N=True, USE_THOUSAND_SEPARATOR=True)
+    def test_doesnt_localize_input_value(self):
+        choices = [
+            (1, 'One'),
+            (1000, 'One thousand'),
+            (1000000, 'One million'),
+        ]
+        html = """
+        <ul>
+        <li><label><input type="radio" name="number" value="1" /> One</label></li>
+        <li><label><input type="radio" name="number" value="1000" /> One thousand</label></li>
+        <li><label><input type="radio" name="number" value="1000000" /> One million</label></li>
+        </ul>
+        """
+        self.check_html(self.widget(choices=choices), 'number', None, html=html)
+
+        choices = [
+            (datetime.time(0, 0), 'midnight'),
+            (datetime.time(12, 0), 'noon'),
+        ]
+        html = """
+        <ul>
+        <li><label><input type="radio" name="time" value="00:00:00" /> midnight</label></li>
+        <li><label><input type="radio" name="time" value="12:00:00" /> noon</label></li>
+        </ul>
+        """
+        self.check_html(self.widget(choices=choices), 'time', None, html=html)

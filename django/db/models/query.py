@@ -1099,17 +1099,16 @@ class QuerySet:
         for field, objects in other._known_related_objects.items():
             self._known_related_objects.setdefault(field, {}).update(objects)
 
-    def _prepare_as_filter_value(self):
-        if self._fields is None:
-            queryset = self.values('pk')
-            queryset.query._forced_pk = True
-        else:
+    def resolve_expression(self, *args, **kwargs):
+        if self._fields and len(self._fields) > 1:
             # values() queryset can only be used as nested queries
             # if they are set up to select only a single field.
             if len(self._fields) > 1:
                 raise TypeError('Cannot use multi-field values as a filter value.')
-            queryset = self._clone()
-        return queryset.query.as_subquery_filter(queryset._db)
+        query = self.query.resolve_expression(*args, **kwargs)
+        query._db = self._db
+        return query
+    resolve_expression.queryset_only = True
 
     def _add_hints(self, **hints):
         """
@@ -1260,7 +1259,7 @@ class Prefetch:
         self.prefetch_through = lookup
         # `prefetch_to` is the path to the attribute that stores the result.
         self.prefetch_to = lookup
-        if queryset is not None and queryset._iterable_class is not ModelIterable:
+        if queryset is not None and not issubclass(queryset._iterable_class, ModelIterable):
             raise ValueError('Prefetch querysets cannot use values().')
         if to_attr:
             self.prefetch_to = LOOKUP_SEP.join(lookup.split(LOOKUP_SEP)[:-1] + [to_attr])

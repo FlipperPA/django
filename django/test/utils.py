@@ -7,6 +7,7 @@ import warnings
 from contextlib import contextmanager
 from functools import wraps
 from io import StringIO
+from itertools import chain
 from types import SimpleNamespace
 from unittest import TestCase, skipIf, skipUnless
 from xml.dom.minidom import Node, parseString
@@ -85,11 +86,7 @@ class ContextList(list):
         """
         Flattened keys of subcontexts.
         """
-        keys = set()
-        for subcontext in self:
-            for dict in subcontext:
-                keys |= set(dict.keys())
-        return keys
+        return set(chain.from_iterable(d for subcontext in self for d in subcontext))
 
 
 def instrumented_test_render(self, context):
@@ -560,7 +557,6 @@ def compare_xml(want, got):
             if node.nodeType != Node.COMMENT_NODE:
                 return node
 
-    want, got = strip_quotes(want, got)
     want = want.strip().replace('\\n', '\n')
     got = got.strip().replace('\\n', '\n')
 
@@ -576,25 +572,6 @@ def compare_xml(want, got):
     got_root = first_node(parseString(got))
 
     return check_element(want_root, got_root)
-
-
-def strip_quotes(want, got):
-    """
-    Strip quotes of doctests output values:
-
-    >>> strip_quotes("'foo'")
-    "foo"
-    >>> strip_quotes('"foo"')
-    "foo"
-    """
-    def is_quoted_string(s):
-        s = s.strip()
-        return len(s) >= 2 and s[0] == s[-1] and s[0] in ('"', "'")
-
-    if is_quoted_string(want) and is_quoted_string(got):
-        want = want.strip()[1:-1]
-        got = got.strip()[1:-1]
-    return want, got
 
 
 def str_prefix(s):

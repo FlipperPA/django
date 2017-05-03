@@ -5,7 +5,7 @@ import re
 
 from django.db.backends.base.schema import BaseDatabaseSchemaEditor
 from django.db.utils import DatabaseError
-from django.utils.text import force_text
+from django.utils.encoding import force_text
 
 
 class DatabaseSchemaEditor(BaseDatabaseSchemaEditor):
@@ -76,7 +76,7 @@ class DatabaseSchemaEditor(BaseDatabaseSchemaEditor):
         # Add it
         self.add_field(model, new_temp_field)
         # Explicit data type conversion
-        # https://docs.oracle.com/cd/B19306_01/server.102/b14200/sql_elements002.htm#sthref340
+        # https://docs.oracle.com/database/121/SQLRF/sql_elements002.htm#SQLRF51054
         new_value = self.quote_name(old_field.column)
         old_type = old_field.db_type(self.connection)
         if re.match('^N?CLOB', old_type):

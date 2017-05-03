@@ -214,6 +214,10 @@ class Query:
             self._annotations = OrderedDict()
         return self._annotations
 
+    @property
+    def has_select_fields(self):
+        return bool(self.select or self.annotation_select_mask or self.extra_select_mask)
+
     def __str__(self):
         """
         Return the query as a string of SQL with the parameter values
@@ -972,8 +976,21 @@ class Query:
         self.append_annotation_mask([alias])
         self.annotations[alias] = annotation
 
-    def _prepare_as_filter_value(self):
-        return self.clone()
+    def resolve_expression(self, query, *args, **kwargs):
+        clone = self.clone()
+        # Subqueries need to use a different set of aliases than the outer query.
+        clone.bump_prefix(query)
+        clone.subquery = True
+        # It's safe to drop ordering if the queryset isn't using slicing,
+        # distinct(*fields) or select_for_update().
+        if (self.low_mark == 0 and self.high_mark is None and
+                not self.distinct_fields and
+                not self.select_for_update):
+            clone.clear_ordering(True)
+        return clone
+
+    def as_sql(self, compiler, connection):
+        return self.get_compiler(connection=connection).as_sql()
 
     def prepare_lookup_value(self, value, lookups, can_reuse, allow_joins=True):
         # Default lookup if none given is exact.
@@ -1003,13 +1020,7 @@ class Query:
                     )
                     # The used_joins for a tuple of expressions is the union of
                     # the used_joins for the individual expressions.
-                    used_joins |= set(k for k, v in self.alias_refcount.items() if v > pre_joins.get(k, 0))
-        # Subqueries need to use a different set of aliases than the
-        # outer query. Call bump_prefix to change aliases of the inner
-        # query (the value).
-        if hasattr(value, '_prepare_as_filter_value'):
-            value = value._prepare_as_filter_value()
-            value.bump_prefix(self)
+                    used_joins.update(k for k, v in self.alias_refcount.items() if v > pre_joins.get(k, 0))
         # For Oracle '' is equivalent to null. The check needs to be done
         # at this stage because join promotion can't be done at compiler
         # stage. Using DEFAULT_DB_ALIAS isn't nice, but it is the best we
@@ -1059,10 +1070,7 @@ class Query:
             # opts would be Author's (from the author field) and value.model
             # would be Author.objects.all() queryset's .model (Author also).
             # The field is the related field on the lhs side.
-            # If _forced_pk isn't set, this isn't a queryset query or values()
-            # or values_list() was specified by the developer in which case
-            # that choice is trusted.
-            if (getattr(value, '_forced_pk', False) and
+            if (isinstance(value, Query) and not value.has_select_fields and
                     not check_rel_lookup_compatibility(value.model, opts, field)):
                 raise ValueError(
                     'Cannot use QuerySet for "%s": Use a QuerySet for "%s".' %
@@ -1979,17 +1987,6 @@ class Query:
             return True
         else:
             return field.null
-
-    def as_subquery_filter(self, db):
-        self._db = db
-        self.subquery = True
-        # It's safe to drop ordering if the queryset isn't using slicing,
-        # distinct(*fields) or select_for_update().
-        if (self.low_mark == 0 and self.high_mark is None and
-                not self.distinct_fields and
-                not self.select_for_update):
-            self.clear_ordering(True)
-        return self
 
 
 def get_order_dir(field, default='ASC'):
