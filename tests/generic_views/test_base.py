@@ -136,9 +136,8 @@ class ViewTest(unittest.TestCase):
         """
         # Check each of the allowed method names
         for method in SimpleView.http_method_names:
-            kwargs = dict(((method, "value"),))
             with self.assertRaises(TypeError):
-                SimpleView.as_view(**kwargs)
+                SimpleView.as_view(**{method: 'value'})
 
         # Check the case view argument is ok if predefined on the class...
         CustomizableView.as_view(parameter="value")
@@ -343,6 +342,10 @@ class TemplateViewTest(SimpleTestCase):
     def test_resolve_login_required_view(self):
         match = resolve('/template/login_required/')
         self.assertIs(match.func.view_class, TemplateView)
+
+    def test_extra_context(self):
+        response = self.client.get('/template/extra_context/')
+        self.assertEqual(response.context['title'], 'Title')
 
 
 @override_settings(ROOT_URLCONF='generic_views.urls')

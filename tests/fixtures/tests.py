@@ -592,8 +592,8 @@ class FixtureLoadingTests(DumpDataAssertMixin, TestCase):
 
     def test_loading_using(self):
         # Load db fixtures 1 and 2. These will load using the 'default' database identifier explicitly
-        management.call_command('loaddata', 'db_fixture_1', verbosity=0, using='default')
-        management.call_command('loaddata', 'db_fixture_2', verbosity=0, using='default')
+        management.call_command('loaddata', 'db_fixture_1', verbosity=0, database='default')
+        management.call_command('loaddata', 'db_fixture_2', verbosity=0, database='default')
         self.assertQuerysetEqual(Article.objects.all(), [
             '<Article: Who needs more than one database?>',
             '<Article: Who needs to use compressed data?>',
@@ -604,7 +604,7 @@ class FixtureLoadingTests(DumpDataAssertMixin, TestCase):
         with self.assertRaisesMessage(CommandError, "No fixture named 'db_fixture_3' found."):
             management.call_command('loaddata', 'db_fixture_3', verbosity=0)
         with self.assertRaisesMessage(CommandError, "No fixture named 'db_fixture_3' found."):
-            management.call_command('loaddata', 'db_fixture_3', verbosity=0, using='default')
+            management.call_command('loaddata', 'db_fixture_3', verbosity=0, database='default')
         self.assertQuerysetEqual(Article.objects.all(), [])
 
     def test_output_formats(self):
@@ -679,6 +679,35 @@ class FixtureLoadingTests(DumpDataAssertMixin, TestCase):
         msg = "Unknown model: fixtures.FooModel"
         with self.assertRaisesMessage(management.CommandError, msg):
             management.call_command('loaddata', 'fixture1', exclude=['fixtures.FooModel'], verbosity=0)
+
+    def test_stdin_without_format(self):
+        """Reading from stdin raises an error if format isn't specified."""
+        msg = '--format must be specified when reading from stdin.'
+        with self.assertRaisesMessage(management.CommandError, msg):
+            management.call_command('loaddata', '-', verbosity=0)
+
+    def test_loading_stdin(self):
+        """Loading fixtures from stdin with json and xml."""
+        tests_dir = os.path.dirname(__file__)
+        fixture_json = os.path.join(tests_dir, 'fixtures', 'fixture1.json')
+        fixture_xml = os.path.join(tests_dir, 'fixtures', 'fixture3.xml')
+
+        with mock.patch('django.core.management.commands.loaddata.sys.stdin', open(fixture_json, 'r')):
+            management.call_command('loaddata', '--format=json', '-', verbosity=0)
+            self.assertEqual(Article.objects.count(), 2)
+            self.assertQuerysetEqual(Article.objects.all(), [
+                '<Article: Time to reform copyright>',
+                '<Article: Poker has no place on ESPN>',
+            ])
+
+        with mock.patch('django.core.management.commands.loaddata.sys.stdin', open(fixture_xml, 'r')):
+            management.call_command('loaddata', '--format=xml', '-', verbosity=0)
+            self.assertEqual(Article.objects.count(), 3)
+            self.assertQuerysetEqual(Article.objects.all(), [
+                '<Article: XML identified as leading cause of cancer>',
+                '<Article: Time to reform copyright>',
+                '<Article: Poker on TV is great!>',
+            ])
 
 
 class NonexistentFixtureTests(TestCase):

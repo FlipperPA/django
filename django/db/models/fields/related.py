@@ -318,6 +318,16 @@ class RelatedField(Field):
                 field.do_related_class(related, model)
             lazy_related_operation(resolve_related_class, cls, self.remote_field.model, field=self)
 
+    def deconstruct(self):
+        name, path, args, kwargs = super().deconstruct()
+        if self.remote_field.limit_choices_to:
+            kwargs['limit_choices_to'] = self.remote_field.limit_choices_to
+        if self.remote_field.related_name is not None:
+            kwargs['related_name'] = self.remote_field.related_name
+        if self.remote_field.related_query_name is not None:
+            kwargs['related_query_name'] = self.remote_field.related_query_name
+        return name, path, args, kwargs
+
     def get_forward_related_filter(self, obj):
         """
         Return the keyword arguments that when supplied to
@@ -555,10 +565,6 @@ class ForeignObject(RelatedField):
         kwargs['from_fields'] = self.from_fields
         kwargs['to_fields'] = self.to_fields
 
-        if self.remote_field.related_name is not None:
-            kwargs['related_name'] = self.remote_field.related_name
-        if self.remote_field.related_query_name is not None:
-            kwargs['related_query_name'] = self.remote_field.related_query_name
         if self.remote_field.parent_link:
             kwargs['parent_link'] = self.remote_field.parent_link
         # Work out string form of "to"
@@ -933,7 +939,7 @@ class ForeignKey(ForeignObject):
     def db_parameters(self, connection):
         return {"type": self.db_type(connection), "check": self.db_check(connection)}
 
-    def convert_empty_strings(self, value, expression, connection, context):
+    def convert_empty_strings(self, value, expression, connection):
         if (not value) and isinstance(value, str):
             return None
         return value
@@ -1389,10 +1395,6 @@ class ManyToManyField(RelatedField):
             kwargs['db_table'] = self.db_table
         if self.remote_field.db_constraint is not True:
             kwargs['db_constraint'] = self.remote_field.db_constraint
-        if self.remote_field.related_name is not None:
-            kwargs['related_name'] = self.remote_field.related_name
-        if self.remote_field.related_query_name is not None:
-            kwargs['related_query_name'] = self.remote_field.related_query_name
         # Rel needs more work.
         if isinstance(self.remote_field.model, str):
             kwargs['to'] = self.remote_field.model
@@ -1604,7 +1606,7 @@ class ManyToManyField(RelatedField):
             initial = defaults['initial']
             if callable(initial):
                 initial = initial()
-            defaults['initial'] = [i._get_pk_val() for i in initial]
+            defaults['initial'] = [i.pk for i in initial]
         return super().formfield(**defaults)
 
     def db_check(self, connection):

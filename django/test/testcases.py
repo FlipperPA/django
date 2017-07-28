@@ -78,7 +78,7 @@ class _AssertNumQueriesContext(CaptureQueriesContext):
             "%d queries executed, %d expected\nCaptured queries were:\n%s" % (
                 executed, self.num,
                 '\n'.join(
-                    query['sql'] for query in self.captured_queries
+                    '%d. %s' % (i, query['sql']) for i, query in enumerate(self.captured_queries, start=1)
                 )
             )
         )
@@ -827,6 +827,11 @@ class TransactionTestCase(SimpleTestCase):
                     enter=False,
                 )
             raise
+        # Clear the queries_log so that it's less likely to overflow (a single
+        # test probably won't execute 9K queries). If queries_log overflows,
+        # then assertNumQueries() doesn't work.
+        for db_name in self._databases_names(include_mirrors=False):
+            connections[db_name].queries_log.clear()
 
     @classmethod
     def _databases_names(cls, include_mirrors=True):
@@ -988,15 +993,11 @@ class TestCase(TransactionTestCase):
 
         if cls.fixtures:
             for db_name in cls._databases_names(include_mirrors=False):
-                    try:
-                        call_command('loaddata', *cls.fixtures, **{
-                            'verbosity': 0,
-                            'commit': False,
-                            'database': db_name,
-                        })
-                    except Exception:
-                        cls._rollback_atomics(cls.cls_atomics)
-                        raise
+                try:
+                    call_command('loaddata', *cls.fixtures, **{'verbosity': 0, 'database': db_name})
+                except Exception:
+                    cls._rollback_atomics(cls.cls_atomics)
+                    raise
         try:
             cls.setUpTestData()
         except Exception:
@@ -1201,9 +1202,9 @@ class _MediaFilesHandler(FSFilesHandler):
 class LiveServerThread(threading.Thread):
     """Thread for running a live http server while the tests are running."""
 
-    def __init__(self, host, static_handler, connections_override=None):
+    def __init__(self, host, static_handler, connections_override=None, port=0):
         self.host = host
-        self.port = None
+        self.port = port
         self.is_ready = threading.Event()
         self.error = None
         self.static_handler = static_handler
@@ -1223,8 +1224,10 @@ class LiveServerThread(threading.Thread):
         try:
             # Create the handler for serving static and media files
             handler = self.static_handler(_MediaFilesHandler(WSGIHandler()))
-            self.httpd = self._create_server(0)
-            self.port = self.httpd.server_address[1]
+            self.httpd = self._create_server()
+            # If binding to port zero, assign the port allocated by the OS.
+            if self.port == 0:
+                self.port = self.httpd.server_address[1]
             self.httpd.set_app(handler)
             self.is_ready.set()
             self.httpd.serve_forever()
@@ -1234,8 +1237,8 @@ class LiveServerThread(threading.Thread):
         finally:
             connections.close_all()
 
-    def _create_server(self, port):
-        return ThreadedWSGIServer((self.host, port), QuietWSGIRequestHandler, allow_reuse_address=False)
+    def _create_server(self):
+        return ThreadedWSGIServer((self.host, self.port), QuietWSGIRequestHandler, allow_reuse_address=False)
 
     def terminate(self):
         if hasattr(self, 'httpd'):
@@ -1257,6 +1260,7 @@ class LiveServerTestCase(TransactionTestCase):
     thread can see the changes.
     """
     host = 'localhost'
+    port = 0
     server_thread_class = LiveServerThread
     static_handler = _StaticFilesHandler
 
@@ -1298,6 +1302,7 @@ class LiveServerTestCase(TransactionTestCase):
             cls.host,
             cls.static_handler,
             connections_override=connections_override,
+            port=cls.port,
         )
 
     @classmethod

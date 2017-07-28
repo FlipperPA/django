@@ -1,3 +1,4 @@
+import errno
 import gzip
 import os
 import struct
@@ -11,7 +12,8 @@ from django.core.files.base import ContentFile
 from django.core.files.move import file_move_safe
 from django.core.files.temp import NamedTemporaryFile
 from django.core.files.uploadedfile import (
-    InMemoryUploadedFile, SimpleUploadedFile, UploadedFile,
+    InMemoryUploadedFile, SimpleUploadedFile, TemporaryUploadedFile,
+    UploadedFile,
 )
 
 try:
@@ -213,6 +215,13 @@ class InMemoryUploadedFileTests(unittest.TestCase):
             self.assertEqual(f.read(), '1')
 
 
+class TemporaryUploadedFileTests(unittest.TestCase):
+    def test_extension_kept(self):
+        """The temporary file name has the same suffix as the original file."""
+        with TemporaryUploadedFile('test.txt', 'text/plain', 1, 'utf8') as temp_file:
+            self.assertTrue(temp_file.file.name.endswith('.upload.txt'))
+
+
 class DimensionClosingBug(unittest.TestCase):
     """
     get_image_dimensions() properly closes files (#8817)
@@ -339,6 +348,30 @@ class FileMoveSafeTests(unittest.TestCase):
 
         os.close(handle_a)
         os.close(handle_b)
+
+    def test_file_move_copystat_cifs(self):
+        """
+        file_move_safe() ignores a copystat() EPERM PermissionError. This
+        happens when the destination filesystem is CIFS, for example.
+        """
+        copystat_EACCES_error = PermissionError(errno.EACCES, 'msg')
+        copystat_EPERM_error = PermissionError(errno.EPERM, 'msg')
+        handle_a, self.file_a = tempfile.mkstemp()
+        handle_b, self.file_b = tempfile.mkstemp()
+        try:
+            # This exception is required to reach the copystat() call in
+            # file_safe_move().
+            with mock.patch('django.core.files.move.os.rename', side_effect=OSError()):
+                # An error besides EPERM isn't ignored.
+                with mock.patch('django.core.files.move.copystat', side_effect=copystat_EACCES_error):
+                    with self.assertRaises(PermissionError):
+                        file_move_safe(self.file_a, self.file_b, allow_overwrite=True)
+                # EPERM is ignored.
+                with mock.patch('django.core.files.move.copystat', side_effect=copystat_EPERM_error):
+                    self.assertIsNone(file_move_safe(self.file_a, self.file_b, allow_overwrite=True))
+        finally:
+            os.close(handle_a)
+            os.close(handle_b)
 
 
 class SpooledTempTests(unittest.TestCase):

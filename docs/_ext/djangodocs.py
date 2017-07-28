@@ -6,14 +6,17 @@ import os
 import re
 
 from docutils import nodes
-from docutils.parsers.rst import directives
+from docutils.parsers.rst import Directive, directives
 from sphinx import addnodes
 from sphinx.builders.html import StandaloneHTMLBuilder
 from sphinx.domains.std import Cmdoption
-from sphinx.util.compat import Directive
 from sphinx.util.console import bold
 from sphinx.util.nodes import set_source_info
-from sphinx.writers.html import SmartyPantsHTMLTranslator
+
+try:
+    from sphinx.writers.html import SmartyPantsHTMLTranslator as HTMLTranslator
+except ImportError:  # Sphinx 1.6+
+    from sphinx.writers.html import HTMLTranslator
 
 # RE for option descriptions without a '--' prefix
 simple_option_desc_re = re.compile(
@@ -226,7 +229,7 @@ class VersionDirective(Directive):
         return ret
 
 
-class DjangoHTMLTranslator(SmartyPantsHTMLTranslator):
+class DjangoHTMLTranslator(HTMLTranslator):
     """
     Django-specific reST to HTML tweaks.
     """
@@ -247,8 +250,7 @@ class DjangoHTMLTranslator(SmartyPantsHTMLTranslator):
         self.first_param = 1
         self.optional_param_level = 0
         self.param_separator = node.child_text_separator
-        self.required_params_left = sum([isinstance(c, addnodes.desc_parameter)
-                                         for c in node.children])
+        self.required_params_left = sum(isinstance(c, addnodes.desc_parameter) for c in node.children)
 
     def depart_desc_parameterlist(self, node):
         self.body.append(')')
@@ -287,7 +289,7 @@ class DjangoHTMLTranslator(SmartyPantsHTMLTranslator):
         old_ids = node.get('ids', [])
         node['ids'] = ['s-' + i for i in old_ids]
         node['ids'].extend(old_ids)
-        SmartyPantsHTMLTranslator.visit_section(self, node)
+        super().visit_section(node)
         node['ids'] = old_ids
 
 

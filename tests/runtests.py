@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import warnings
+from contextlib import suppress
 
 import django
 from django.apps import apps
@@ -80,11 +81,12 @@ CONTRIB_TESTS_TO_APPS = {
 
 def get_test_modules():
     modules = []
-    discovery_paths = [
-        (None, RUNTESTS_DIR),
+    discovery_paths = [(None, RUNTESTS_DIR)]
+    if connection.features.gis_enabled:
         # GIS tests are in nested apps
-        ('gis_tests', os.path.join(RUNTESTS_DIR, 'gis_tests')),
-    ]
+        discovery_paths.append(('gis_tests', os.path.join(RUNTESTS_DIR, 'gis_tests')))
+    else:
+        SUBDIRS_TO_SKIP.append('gis_tests')
 
     for modpath, dirpath in discovery_paths:
         for f in os.listdir(dirpath):
@@ -102,6 +104,12 @@ def get_installed():
 
 
 def setup(verbosity, test_labels, parallel):
+    # Reduce the given test labels to just the app module path.
+    test_labels_set = set()
+    for label in test_labels:
+        bits = label.split('.')[:1]
+        test_labels_set.add('.'.join(bits))
+
     if verbosity >= 1:
         msg = "Testing against Django installed in '%s'" % os.path.dirname(django.__file__)
         max_parallel = default_test_processes() if parallel == 0 else parallel
@@ -166,19 +174,21 @@ def setup(verbosity, test_labels, parallel):
     # Load all the ALWAYS_INSTALLED_APPS.
     django.setup()
 
+    # It would be nice to put this validation earlier but it must come after
+    # django.setup() so that connection.features.gis_enabled can be accessed
+    # without raising AppRegistryNotReady when running gis_tests in isolation
+    # on some backends (e.g. PostGIS).
+    if 'gis_tests' in test_labels_set and not connection.features.gis_enabled:
+        print('Aborting: A GIS database backend is required to run gis_tests.')
+        sys.exit(1)
+
     # Load all the test model apps.
     test_modules = get_test_modules()
-
-    # Reduce given test labels to just the app module path
-    test_labels_set = set()
-    for label in test_labels:
-        bits = label.split('.')[:1]
-        test_labels_set.add('.'.join(bits))
 
     installed_app_names = set(get_installed())
     for modpath, module_name in test_modules:
         if modpath:
-            module_label = '.'.join([modpath, module_name])
+            module_label = modpath + '.' + module_name
         else:
             module_label = module_name
         # if the module (or an ancestor) was named on the command line, or
@@ -306,10 +316,8 @@ def bisect_tests(bisection_label, options, test_labels, parallel):
     # Make sure the bisection point isn't in the test list
     # Also remove tests that need to be run in specific combinations
     for label in [bisection_label, 'model_inheritance_same_model_name']:
-        try:
+        with suppress(ValueError):
             test_labels.remove(label)
-        except ValueError:
-            pass
 
     subprocess_args = get_subprocess_args(options)
 
@@ -357,10 +365,8 @@ def paired_tests(paired_test, options, test_labels, parallel):
     # Make sure the constant member of the pair isn't in the test list
     # Also remove tests that need to be run in specific combinations
     for label in [paired_test, 'model_inheritance_same_model_name']:
-        try:
+        with suppress(ValueError):
             test_labels.remove(label)
-        except ValueError:
-            pass
 
     subprocess_args = get_subprocess_args(options)
 

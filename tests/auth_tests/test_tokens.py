@@ -43,11 +43,12 @@ class TokenGeneratorTest(TestCase):
         user = User.objects.create_user('tokentestuser', 'test2@example.com', 'testpw')
         p0 = PasswordResetTokenGenerator()
         tk1 = p0.make_token(user)
-        p1 = Mocked(date.today() + timedelta(settings.PASSWORD_RESET_TIMEOUT_DAYS))
+        p1 = Mocked(date.today() + timedelta(days=settings.PASSWORD_RESET_TIMEOUT_DAYS, seconds=-1))
         self.assertTrue(p1.check_token(user, tk1))
-
-        p2 = Mocked(date.today() + timedelta(settings.PASSWORD_RESET_TIMEOUT_DAYS + 1))
+        p2 = Mocked(date.today() + timedelta(days=settings.PASSWORD_RESET_TIMEOUT_DAYS))
         self.assertFalse(p2.check_token(user, tk1))
+        p3 = Mocked(date.today() + timedelta(days=settings.PASSWORD_RESET_TIMEOUT_DAYS, seconds=1))
+        self.assertFalse(p3.check_token(user, tk1))
 
     def test_check_token_with_nonexistent_token_and_user(self):
         user = User.objects.create_user('tokentestuser', 'test2@example.com', 'testpw')
@@ -55,3 +56,24 @@ class TokenGeneratorTest(TestCase):
         tk1 = p0.make_token(user)
         self.assertIs(p0.check_token(None, tk1), False)
         self.assertIs(p0.check_token(user, None), False)
+
+    def test_token_with_different_secret(self):
+        """
+        A valid token can be created with a secret other than SECRET_KEY by
+        using the PasswordResetTokenGenerator.secret attribute.
+        """
+        user = User.objects.create_user('tokentestuser', 'test2@example.com', 'testpw')
+        new_secret = 'abcdefghijkl'
+        # Create and check a token with a different secret.
+        p0 = PasswordResetTokenGenerator()
+        p0.secret = new_secret
+        tk0 = p0.make_token(user)
+        self.assertTrue(p0.check_token(user, tk0))
+        # Create and check a token with the default secret.
+        p1 = PasswordResetTokenGenerator()
+        self.assertEqual(p1.secret, settings.SECRET_KEY)
+        self.assertNotEqual(p1.secret, new_secret)
+        tk1 = p1.make_token(user)
+        # Tokens created with a different secret don't validate.
+        self.assertFalse(p0.check_token(user, tk1))
+        self.assertFalse(p1.check_token(user, tk0))

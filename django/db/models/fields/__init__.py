@@ -191,7 +191,7 @@ class Field(RegisterLookupMixin):
 
     def __repr__(self):
         """Display the module, class, and name of the field."""
-        path = '%s.%s' % (self.__class__.__module__, self.__class__.__name__)
+        path = '%s.%s' % (self.__class__.__module__, self.__class__.__qualname__)
         name = getattr(self, 'name', None)
         if name is not None:
             return '<%s: %s>' % (path, name)
@@ -448,7 +448,7 @@ class Field(RegisterLookupMixin):
                 if value is not default:
                     keywords[name] = value
         # Work out path - we shorten it for known Django core fields
-        path = "%s.%s" % (self.__class__.__module__, self.__class__.__name__)
+        path = "%s.%s" % (self.__class__.__module__, self.__class__.__qualname__)
         if path.startswith("django.db.models.fields.related"):
             path = path.replace("django.db.models.fields.related", "django.db.models")
         if path.startswith("django.db.models.fields.files"):
@@ -514,7 +514,11 @@ class Field(RegisterLookupMixin):
             # instance. The code below will create a new empty instance of
             # class self.__class__, then update its dict with self.__dict__
             # values - so, this is very close to normal pickle.
-            return _empty, (self.__class__,), self.__dict__
+            state = self.__dict__.copy()
+            # The _get_default cached_property can't be pickled due to lambda
+            # usage.
+            state.pop('_get_default', None)
+            return _empty, (self.__class__,), state
         return _load_field, (self.model._meta.app_label, self.model._meta.object_name,
                              self.name)
 
@@ -603,13 +607,16 @@ class Field(RegisterLookupMixin):
         self.run_validators(value)
         return value
 
+    def db_type_parameters(self, connection):
+        return DictWrapper(self.__dict__, connection.ops.quote_name, 'qn_')
+
     def db_check(self, connection):
         """
         Return the database column check constraint for this field, for the
         provided connection. Works the same way as db_type() for the case that
         get_internal_type() does not map to a preexisting model field.
         """
-        data = DictWrapper(self.__dict__, connection.ops.quote_name, "qn_")
+        data = self.db_type_parameters(connection)
         try:
             return connection.data_type_check_constraints[self.get_internal_type()] % data
         except KeyError:
@@ -635,7 +642,7 @@ class Field(RegisterLookupMixin):
         # mapped to one of the built-in Django field types. In this case, you
         # can implement db_type() instead of get_internal_type() to specify
         # exactly which wacky database column type you want to use.
-        data = DictWrapper(self.__dict__, connection.ops.quote_name, "qn_")
+        data = self.db_type_parameters(connection)
         try:
             return connection.data_types[self.get_internal_type()] % data
         except KeyError:
@@ -647,6 +654,13 @@ class Field(RegisterLookupMixin):
         use. For example, this method is called by ForeignKey and OneToOneField
         to determine its data type.
         """
+        return self.db_type(connection)
+
+    def cast_db_type(self, connection):
+        """Return the data type to use in the Cast() function."""
+        db_type = connection.ops.cast_data_types.get(self.get_internal_type())
+        if db_type:
+            return db_type % self.db_type_parameters(connection)
         return self.db_type(connection)
 
     def db_parameters(self, connection):
@@ -795,7 +809,7 @@ class Field(RegisterLookupMixin):
                    for x in rel_model._default_manager.complex_filter(
                        limit_choices_to)]
         else:
-            lst = [(x._get_pk_val(), smart_text(x))
+            lst = [(x.pk, smart_text(x))
                    for x in rel_model._default_manager.complex_filter(
                        limit_choices_to)]
         return first_choice + lst
@@ -1051,6 +1065,11 @@ class CharField(Field):
             ]
         else:
             return []
+
+    def cast_db_type(self, connection):
+        if self.max_length is None:
+            return connection.ops.cast_char_field_without_max_length
+        return super().cast_db_type(connection)
 
     def get_internal_type(self):
         return "CharField"
@@ -1508,6 +1527,10 @@ class DecimalField(Field):
             validators.DecimalValidator(self.max_digits, self.decimal_places)
         ]
 
+    @cached_property
+    def context(self):
+        return decimal.Context(prec=self.max_digits)
+
     def deconstruct(self):
         name, path, args, kwargs = super().deconstruct()
         if self.max_digits is not None:
@@ -1522,6 +1545,8 @@ class DecimalField(Field):
     def to_python(self, value):
         if value is None:
             return value
+        if isinstance(value, float):
+            return self.context.create_decimal_from_float(value)
         try:
             return decimal.Decimal(value)
         except decimal.InvalidOperation:
@@ -1530,12 +1555,6 @@ class DecimalField(Field):
                 code='invalid',
                 params={'value': value},
             )
-
-    def _format(self, value):
-        if isinstance(value, str):
-            return value
-        else:
-            return self.format_number(value)
 
     def format_number(self, value):
         """
@@ -2099,7 +2118,9 @@ class TextField(Field):
         # Passing max_length to forms.CharField means that the value's length
         # will be validated twice. This is considered acceptable since we want
         # the value in the form field (to pass into widget for example).
-        defaults = {'max_length': self.max_length, 'widget': forms.Textarea}
+        defaults = {'max_length': self.max_length}
+        if not self.choices:
+            defaults['widget'] = forms.Textarea
         defaults.update(kwargs)
         return super().formfield(**defaults)
 

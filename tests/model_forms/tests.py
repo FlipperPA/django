@@ -1,7 +1,7 @@
 import datetime
 import os
 from decimal import Decimal
-from unittest import skipUnless
+from unittest import mock, skipUnless
 
 from django import forms
 from django.core.exceptions import (
@@ -32,7 +32,7 @@ from .models import (
 )
 
 if test_images:
-    from .models import ImageFile, OptionalImageFile
+    from .models import ImageFile, OptionalImageFile, NoExtensionImageFile
 
     class ImageFileForm(forms.ModelForm):
         class Meta:
@@ -42,6 +42,11 @@ if test_images:
     class OptionalImageFileForm(forms.ModelForm):
         class Meta:
             model = OptionalImageFile
+            fields = '__all__'
+
+    class NoExtensionImageFileForm(forms.ModelForm):
+        class Meta:
+            model = NoExtensionImageFile
             fields = '__all__'
 
 
@@ -1661,7 +1666,7 @@ class ModelChoiceFieldTests(TestCase):
             category = forms.ModelChoiceField(queryset=None)
 
             def __init__(self, *args, **kwargs):
-                super(ModelChoiceForm, self).__init__(*args, **kwargs)
+                super().__init__(*args, **kwargs)
                 self.fields['category'].queryset = Category.objects.filter(slug__contains='test')
 
         form = ModelChoiceForm()
@@ -1697,6 +1702,10 @@ class ModelChoiceFieldTests(TestCase):
             ['Select a valid choice. That choice is not one of the available choices.']
         )
 
+    def test_disabled_modelchoicefield_has_changed(self):
+        field = forms.ModelChoiceField(Author.objects.all(), disabled=True)
+        self.assertIs(field.has_changed('x', 'y'), False)
+
     def test_disabled_multiplemodelchoicefield(self):
         class ArticleForm(forms.ModelForm):
             categories = forms.ModelMultipleChoiceField(Category.objects.all(), required=False)
@@ -1721,6 +1730,10 @@ class ModelChoiceFieldTests(TestCase):
         form.fields['categories'].disabled = True
         self.assertEqual(form.errors, {})
         self.assertEqual([x.pk for x in form.cleaned_data['categories']], [category1.pk])
+
+    def test_disabled_modelmultiplechoicefield_has_changed(self):
+        field = forms.ModelMultipleChoiceField(Author.objects.all(), disabled=True)
+        self.assertIs(field.has_changed('x', 'y'), False)
 
     def test_modelchoicefield_iterator(self):
         """
@@ -2461,6 +2474,19 @@ class FileAndImageFieldTests(TestCase):
         self.assertEqual(instance.image.name, 'foo/test4.png')
         instance.delete()
 
+        # Editing an instance that has an image without an extension shouldn't
+        # fail validation. First create:
+        f = NoExtensionImageFileForm(
+            data={'description': 'An image'},
+            files={'image': SimpleUploadedFile('test.png', image_data)},
+        )
+        self.assertTrue(f.is_valid())
+        instance = f.save()
+        self.assertEqual(instance.image.name, 'tests/no_extension')
+        # Then edit:
+        f = NoExtensionImageFileForm(data={'description': 'Edited image'}, instance=instance)
+        self.assertTrue(f.is_valid())
+
 
 class ModelOtherFieldTests(SimpleTestCase):
     def test_big_integer_field(self):
@@ -2783,7 +2809,7 @@ class ModelFormInheritanceTests(SimpleTestCase):
                 model = Writer
                 fields = '__all__'
 
-        self.assertEqual(list(ModelForm().fields.keys()), ['name', 'age'])
+        self.assertEqual(list(ModelForm().fields), ['name', 'age'])
 
     def test_field_removal(self):
         class ModelForm(forms.ModelForm):
@@ -2800,13 +2826,13 @@ class ModelFormInheritanceTests(SimpleTestCase):
         class Form2(forms.Form):
             foo = forms.IntegerField()
 
-        self.assertEqual(list(ModelForm().fields.keys()), ['name'])
-        self.assertEqual(list(type('NewForm', (Mixin, Form), {})().fields.keys()), [])
-        self.assertEqual(list(type('NewForm', (Form2, Mixin, Form), {})().fields.keys()), ['foo'])
-        self.assertEqual(list(type('NewForm', (Mixin, ModelForm, Form), {})().fields.keys()), ['name'])
-        self.assertEqual(list(type('NewForm', (ModelForm, Mixin, Form), {})().fields.keys()), ['name'])
-        self.assertEqual(list(type('NewForm', (ModelForm, Form, Mixin), {})().fields.keys()), ['name', 'age'])
-        self.assertEqual(list(type('NewForm', (ModelForm, Form), {'age': None})().fields.keys()), ['name'])
+        self.assertEqual(list(ModelForm().fields), ['name'])
+        self.assertEqual(list(type('NewForm', (Mixin, Form), {})().fields), [])
+        self.assertEqual(list(type('NewForm', (Form2, Mixin, Form), {})().fields), ['foo'])
+        self.assertEqual(list(type('NewForm', (Mixin, ModelForm, Form), {})().fields), ['name'])
+        self.assertEqual(list(type('NewForm', (ModelForm, Mixin, Form), {})().fields), ['name'])
+        self.assertEqual(list(type('NewForm', (ModelForm, Form, Mixin), {})().fields), ['name', 'age'])
+        self.assertEqual(list(type('NewForm', (ModelForm, Form), {'age': None})().fields), ['name'])
 
     def test_field_removal_name_clashes(self):
         """
@@ -2887,6 +2913,16 @@ class LimitChoicesToTests(TestCase):
     def test_fields_for_model_applies_limit_choices_to(self):
         fields = fields_for_model(StumpJoke, ['has_fooled_today'])
         self.assertSequenceEqual(fields['has_fooled_today'].queryset, [self.threepwood])
+
+    def test_callable_called_each_time_form_is_instantiated(self):
+        field = StumpJokeForm.base_fields['most_recently_fooled']
+        with mock.patch.object(field, 'limit_choices_to') as today_callable_dict:
+            StumpJokeForm()
+            self.assertEqual(today_callable_dict.call_count, 1)
+            StumpJokeForm()
+            self.assertEqual(today_callable_dict.call_count, 2)
+            StumpJokeForm()
+            self.assertEqual(today_callable_dict.call_count, 3)
 
 
 class FormFieldCallbackTests(SimpleTestCase):
@@ -2974,7 +3010,7 @@ class FormFieldCallbackTests(SimpleTestCase):
         class InheritedForm(NewForm):
             pass
 
-        for name in NewForm.base_fields.keys():
+        for name in NewForm.base_fields:
             self.assertEqual(
                 type(InheritedForm.base_fields[name].widget),
                 type(NewForm.base_fields[name].widget)

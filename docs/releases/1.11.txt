@@ -327,6 +327,7 @@ Models
 
 * :class:`~django.db.models.ImageField` now has a default
   :data:`~django.core.validators.validate_image_file_extension` validator.
+  (This validator moved to the form field in :doc:`Django 1.11.2 <1.11.2>`.)
 
 * Added support for time truncation to
   :class:`~django.db.models.functions.datetime.Trunc` functions.
@@ -489,6 +490,9 @@ Backwards incompatible changes in 1.11
 Database backend API
 --------------------
 
+This section describes changes that may be needed in third-party database
+backends.
+
 * The ``DatabaseOperations.time_trunc_sql()`` method is added to support
   ``TimeField`` truncation. It accepts a ``lookup_type`` and ``field_name``
   arguments and returns the appropriate SQL to truncate the given time field
@@ -533,6 +537,8 @@ to support it.
 Also, the minimum supported version of psycopg2 is increased from 2.4.5 to
 2.5.4.
 
+.. _liveservertestcase-port-zero-change:
+
 ``LiveServerTestCase`` binds to port zero
 -----------------------------------------
 
@@ -541,6 +547,9 @@ Rather than taking a port range and iterating to find a free port,
 to assign a free port. The ``DJANGO_LIVE_TEST_SERVER_ADDRESS`` environment
 variable is no longer used, and as it's also no longer used, the
 ``manage.py test --liveserver`` option is removed.
+
+If you need to bind ``LiveServerTestCase`` to a specific port, use the ``port``
+attribute added in Django 1.11.2.
 
 Protection against insecure redirects in :mod:`django.contrib.auth` and ``i18n`` views
 --------------------------------------------------------------------------------------
@@ -599,6 +608,8 @@ Some undocumented classes in ``django.forms.widgets`` are removed:
 * ``RendererMixin``, ``ChoiceFieldRenderer``, ``RadioFieldRenderer``,
   ``CheckboxFieldRenderer``
 * ``ChoiceInput``, ``RadioChoiceInput``, ``CheckboxChoiceInput``
+
+The undocumented ``Select.render_option()`` method is removed.
 
 The ``Widget.format_output()`` method is removed. Use a custom widget template
 instead.
@@ -738,6 +749,15 @@ Miscellaneous
 * Support for ``cx_Oracle`` < 5.2 is removed.
 
 * Support for IPython < 1.0 is removed from the ``shell`` command.
+
+* The signature of private API ``Widget.build_attrs()`` changed from
+  ``extra_attrs=None, **kwargs`` to ``base_attrs, extra_attrs=None``.
+
+* File-like objects (e.g., :class:`~io.StringIO` and :class:`~io.BytesIO`)
+  uploaded to an :class:`~django.db.models.ImageField` using the test client
+  now require a ``name`` attribute with a value that passes the
+  :data:`~django.core.validators.validate_image_file_extension` validator.
+  See the note in :meth:`.Client.post`.
 
 .. _deprecated-features-1.11:
 

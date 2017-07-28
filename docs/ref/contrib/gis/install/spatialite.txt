@@ -86,7 +86,7 @@ Get the latest SpatiaLite library source bundle from the
 
         $ ./configure --target=macosx
 
-__ https://www.gaia-gis.it/gaia-sins/libspatialite-sources/
+__ http://www.gaia-gis.it/gaia-sins/libspatialite-sources/
 
 .. _spatialite_macos:
 
@@ -133,4 +133,4 @@ following to your ``settings.py``::
 
     SPATIALITE_LIBRARY_PATH='/usr/local/lib/mod_spatialite.dylib'
 
-.. _Homebrew: http://brew.sh/
+.. _Homebrew: https://brew.sh/

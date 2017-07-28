@@ -1,6 +1,7 @@
 from django.contrib.gis.db.backends.base.features import BaseSpatialFeatures
-from django.db.backends.mysql.features import \
-    DatabaseFeatures as MySQLDatabaseFeatures
+from django.db.backends.mysql.features import (
+    DatabaseFeatures as MySQLDatabaseFeatures,
+)
 
 
 class DatabaseFeatures(BaseSpatialFeatures, MySQLDatabaseFeatures):
@@ -9,7 +10,6 @@ class DatabaseFeatures(BaseSpatialFeatures, MySQLDatabaseFeatures):
     supports_distance_geodetic = False
     supports_length_geodetic = False
     supports_area_geodetic = False
-    supports_distances_lookups = False
     supports_transform = False
     supports_real_shape_operations = False
     supports_null_geometries = False

@@ -16,7 +16,6 @@ from ..utils import mysql, oracle, postgis, spatialite
 from .models import City, Country, CountryWebMercator, State, Track
 
 
-@skipUnlessDBFeature("gis_enabled")
 class GISFunctionsTests(TestCase):
     """
     Testing functions from django/contrib/gis/db/models/functions.py.
@@ -271,7 +270,7 @@ class GISFunctionsTests(TestCase):
     def test_area_with_regular_aggregate(self):
         # Create projected country objects, for this test to work on all backends.
         for c in Country.objects.all():
-            CountryWebMercator.objects.create(name=c.name, mpoly=c.mpoly)
+            CountryWebMercator.objects.create(name=c.name, mpoly=c.mpoly.transform(3857, clone=True))
         # Test in projected coordinate system
         qs = CountryWebMercator.objects.annotate(area_sum=Sum(functions.Area('mpoly')))
         # Some backends (e.g. Oracle) cannot group by multipolygon values, so
@@ -337,9 +336,8 @@ class GISFunctionsTests(TestCase):
         self.assertEqual(qs.first().num_points, 2)
         mpoly_qs = Country.objects.annotate(num_points=functions.NumPoints('mpoly'))
         if not connection.features.supports_num_points_poly:
-            msg = 'NumPoints can only operate on LineString content on this database.'
-            with self.assertRaisesMessage(TypeError, msg):
-                list(mpoly_qs)
+            for c in mpoly_qs:
+                self.assertIsNone(c.num_points)
             return
 
         for c in mpoly_qs:

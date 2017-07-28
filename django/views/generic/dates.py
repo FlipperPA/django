@@ -55,7 +55,10 @@ class YearMixin:
 
         The interval is defined by start date <= item date < next start date.
         """
-        return date.replace(year=date.year + 1, month=1, day=1)
+        try:
+            return date.replace(year=date.year + 1, month=1, day=1)
+        except ValueError:
+            raise Http404(_("Date out of range"))
 
     def _get_current_year(self, date):
         """Return the start date of the current interval."""
@@ -102,7 +105,10 @@ class MonthMixin:
         The interval is defined by start date <= item date < next start date.
         """
         if date.month == 12:
-            return date.replace(year=date.year + 1, month=1, day=1)
+            try:
+                return date.replace(year=date.year + 1, month=1, day=1)
+            except ValueError:
+                raise Http404(_("Date out of range"))
         else:
             return date.replace(month=date.month + 1, day=1)
 
@@ -196,7 +202,10 @@ class WeekMixin:
 
         The interval is defined by start date <= item date < next start date.
         """
-        return date + datetime.timedelta(days=7 - self._get_weekday(date))
+        try:
+            return date + datetime.timedelta(days=7 - self._get_weekday(date))
+        except OverflowError:
+            raise Http404(_("Date out of range"))
 
     def _get_current_week(self, date):
         """Return the start date of the current interval."""
@@ -600,8 +609,8 @@ def _date_from_string(year, year_format, month='', month_format='', day='', day_
     Get a datetime.date object given a format string and a year, month, and day
     (only year is mandatory). Raise a 404 for an invalid date.
     """
-    format = delim.join((year_format, month_format, day_format))
-    datestr = delim.join((year, month, day))
+    format = year_format + delim + month_format + delim + day_format
+    datestr = year + delim + month + delim + day
     try:
         return datetime.datetime.strptime(datestr, format).date()
     except ValueError:

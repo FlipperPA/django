@@ -26,7 +26,7 @@ class BaseUserManager(models.Manager):
         except ValueError:
             pass
         else:
-            email = '@'.join([email_name, domain_part.lower()])
+            email = email_name + '@' + domain_part.lower()
         return email
 
     def make_random_password(self, length=10,
@@ -118,12 +118,6 @@ class AbstractBaseUser(models.Model):
 
     def has_usable_password(self):
         return is_password_usable(self.password)
-
-    def get_full_name(self):
-        raise NotImplementedError('subclasses of AbstractBaseUser must provide a get_full_name() method')
-
-    def get_short_name(self):
-        raise NotImplementedError('subclasses of AbstractBaseUser must provide a get_short_name() method.')
 
     def get_session_auth_hash(self):
         """

@@ -69,6 +69,7 @@ class LiveServerViews(LiveServerBase):
     def test_404(self):
         with self.assertRaises(HTTPError) as err:
             self.urlopen('/')
+        err.exception.close()
         self.assertEqual(err.exception.code, 404, 'Expected 404 response')
 
     def test_view(self):
@@ -87,6 +88,7 @@ class LiveServerViews(LiveServerBase):
         """
         with self.assertRaises(HTTPError) as err:
             self.urlopen('/static/another_app/another_app_static_file.txt')
+        err.exception.close()
         self.assertEqual(err.exception.code, 404, 'Expected 404 response')
 
     def test_media_files(self):
@@ -111,7 +113,8 @@ class LiveServerDatabase(LiveServerBase):
         """
         Data written to the database by a view can be read.
         """
-        self.urlopen('/create_model_instance/')
+        with self.urlopen('/create_model_instance/'):
+            pass
         self.assertQuerysetEqual(
             Person.objects.all().order_by('pk'),
             ['jane', 'robert', 'emily'],
@@ -142,6 +145,24 @@ class LiveServerPort(LiveServerBase):
             self.assertNotEqual(
                 self.live_server_url, TestCase.live_server_url,
                 "Acquired duplicate server addresses for server threads: %s" % self.live_server_url
+            )
+        finally:
+            if hasattr(TestCase, 'server_thread'):
+                TestCase.server_thread.terminate()
+
+    def test_specified_port_bind(self):
+        """LiveServerTestCase.port customizes the server's port."""
+        TestCase = type(str('TestCase'), (LiveServerBase,), {})
+        # Find an open port and tell TestCase to use it.
+        s = socket.socket()
+        s.bind(('', 0))
+        TestCase.port = s.getsockname()[1]
+        s.close()
+        TestCase.setUpClass()
+        try:
+            self.assertEqual(
+                TestCase.port, TestCase.server_thread.port,
+                'Did not use specified port for LiveServerTestCase thread: %s' % TestCase.port
             )
         finally:
             if hasattr(TestCase, 'server_thread'):

@@ -21,7 +21,7 @@ from django.db.models.query_utils import (
     Q, check_rel_lookup_compatibility, refs_expression,
 )
 from django.db.models.sql.constants import (
-    INNER, LOUTER, ORDER_DIR, ORDER_PATTERN, QUERY_TERMS, SINGLE,
+    INNER, LOUTER, ORDER_DIR, ORDER_PATTERN, SINGLE,
 )
 from django.db.models.sql.datastructures import (
     BaseTable, Empty, EmptyResultSet, Join, MultiJoin,
@@ -30,6 +30,7 @@ from django.db.models.sql.where import (
     AND, OR, ExtraWhere, NothingNode, WhereNode,
 )
 from django.utils.encoding import force_text
+from django.utils.functional import cached_property
 from django.utils.tree import Node
 
 __all__ = ['Query', 'RawQuery']
@@ -45,7 +46,7 @@ def get_field_names_from_opts(opts):
 class RawQuery:
     """A single raw SQL query."""
 
-    def __init__(self, sql, using, params=None, context=None):
+    def __init__(self, sql, using, params=None):
         self.params = params or ()
         self.sql = sql
         self.using = using
@@ -56,10 +57,9 @@ class RawQuery:
         self.low_mark, self.high_mark = 0, None  # Used for offset/limit
         self.extra_select = {}
         self.annotation_select = {}
-        self.context = context or {}
 
     def clone(self, using):
-        return RawQuery(self.sql, using, params=self.params, context=self.context.copy())
+        return RawQuery(self.sql, using, params=self.params)
 
     def get_columns(self):
         if self.cursor is None:
@@ -113,7 +113,6 @@ class Query:
 
     alias_prefix = 'T'
     subq_aliases = frozenset([alias_prefix])
-    query_terms = QUERY_TERMS
 
     compiler = 'SQLCompiler'
 
@@ -145,7 +144,6 @@ class Query:
         # clause to contain other than default fields (values(), subqueries...)
         # Note that annotations go to annotations dictionary.
         self.select = ()
-        self.tables = ()  # Aliases in the order they are created.
         self.where = where()
         self.where_class = where
         # The group_by attribute can have one of the following forms:
@@ -162,6 +160,7 @@ class Query:
         self.select_for_update = False
         self.select_for_update_nowait = False
         self.select_for_update_skip_locked = False
+        self.select_for_update_of = ()
 
         self.select_related = False
         # Arbitrary limit for select_related to prevents infinite recursion.
@@ -200,8 +199,6 @@ class Query:
         # load.
         self.deferred_loading = (frozenset(), True)
 
-        self.context = {}
-
     @property
     def extra(self):
         if self._extra is None:
@@ -217,6 +214,10 @@ class Query:
     @property
     def has_select_fields(self):
         return bool(self.select or self.annotation_select_mask or self.extra_select_mask)
+
+    @cached_property
+    def base_table(self):
+        return list(self.alias_map)[0] if self.alias_map else None
 
     def __str__(self):
         """
@@ -237,7 +238,8 @@ class Query:
         return self.get_compiler(DEFAULT_DB_ALIAS).as_sql()
 
     def __deepcopy__(self, memo):
-        result = self.clone(memo=memo)
+        """Limit the amount of work when a Query is deepcopied."""
+        result = self.clone()
         memo[id(self)] = result
         return result
 
@@ -259,7 +261,7 @@ class Query:
         """
         return self.model._meta
 
-    def clone(self, klass=None, memo=None, **kwargs):
+    def clone(self, klass=None, **kwargs):
         """
         Create a copy of the current instance. The 'kwargs' parameter can be
         used by clients to update attributes after copying has taken place.
@@ -275,7 +277,6 @@ class Query:
         obj.default_ordering = self.default_ordering
         obj.standard_ordering = self.standard_ordering
         obj.select = self.select
-        obj.tables = self.tables
         obj.where = self.where.clone()
         obj.where_class = self.where_class
         obj.group_by = self.group_by
@@ -286,6 +287,7 @@ class Query:
         obj.select_for_update = self.select_for_update
         obj.select_for_update_nowait = self.select_for_update_nowait
         obj.select_for_update_skip_locked = self.select_for_update_skip_locked
+        obj.select_for_update_of = self.select_for_update_of
         obj.select_related = self.select_related
         obj.values_select = self.values_select
         obj._annotations = self._annotations.copy() if self._annotations is not None else None
@@ -329,14 +331,7 @@ class Query:
         obj.__dict__.update(kwargs)
         if hasattr(obj, '_setup_query'):
             obj._setup_query()
-        obj.context = self.context.copy()
         return obj
-
-    def add_context(self, key, value):
-        self.context[key] = value
-
-    def get_context(self, key, default=None):
-        return self.context.get(key, default)
 
     def relabeled_clone(self, change_map):
         clone = self.clone()
@@ -406,12 +401,12 @@ class Query:
         # aren't smart enough to remove the existing annotations from the
         # query, so those would force us to use GROUP BY.
         #
-        # If the query has limit or distinct, then those operations must be
-        # done in a subquery so that we are aggregating on the limit and/or
-        # distinct results instead of applying the distinct and limit after the
-        # aggregation.
+        # If the query has limit or distinct, or uses set operations, then
+        # those operations must be done in a subquery so that the query
+        # aggregates on the limit and/or distinct results instead of applying
+        # the distinct and limit after the aggregation.
         if (isinstance(self.group_by, tuple) or has_limit or has_existing_annotations or
-                self.distinct):
+                self.distinct or self.combinator):
             from django.db.models.sql.subqueries import AggregateQuery
             outer_query = AggregateQuery(self.model)
             inner_query = self.clone()
@@ -432,7 +427,7 @@ class Query:
                     inner_query.group_by = (self.model._meta.pk.get_col(inner_query.get_initial_alias()),)
                 inner_query.default_cols = False
 
-            relabels = {t: 'subquery' for t in inner_query.tables}
+            relabels = {t: 'subquery' for t in inner_query.alias_map}
             relabels[None] = 'subquery'
             # Remove any aggregates marked for reduction from the subquery
             # and move them to the outer AggregateQuery.
@@ -540,7 +535,7 @@ class Query:
         # Note that we will be creating duplicate joins for non-m2m joins in
         # the AND case. The results will be correct but this creates too many
         # joins. This is something that could be fixed later on.
-        reuse = set() if conjunction else set(self.tables)
+        reuse = set() if conjunction else set(self.alias_map)
         # Base table must be present in the query - this is the same
         # table on both sides.
         self.get_initial_alias()
@@ -550,7 +545,8 @@ class Query:
         rhs_votes = set()
         # Now, add the joins from rhs query into the new query (skipping base
         # table).
-        for alias in rhs.tables[1:]:
+        rhs_tables = list(rhs.alias_map)[1:]
+        for alias in rhs_tables:
             join = rhs.alias_map[alias]
             # If the left side of the join was already relabeled, use the
             # updated alias.
@@ -715,7 +711,6 @@ class Query:
             alias = table_name
             self.table_map[alias] = [alias]
         self.alias_refcount[alias] = 1
-        self.tables += (alias,)
         return alias, True
 
     def ref_alias(self, alias):
@@ -756,7 +751,7 @@ class Query:
                 # Join type of 'alias' changed, so re-examine all aliases that
                 # refer to this one.
                 aliases.extend(
-                    join for join in self.alias_map.keys()
+                    join for join in self.alias_map
                     if self.alias_map[join].parent_alias == alias and join not in aliases
                 )
 
@@ -794,7 +789,7 @@ class Query:
         relabelling any references to them in select columns and the where
         clause.
         """
-        assert set(change_map.keys()).intersection(set(change_map.values())) == set()
+        assert set(change_map).intersection(set(change_map.values())) == set()
 
         # 1. Update references in "select" (normal columns plus aliases),
         # "group by" and "where".
@@ -865,12 +860,9 @@ class Query:
         self.subq_aliases = self.subq_aliases.union([self.alias_prefix])
         outer_query.subq_aliases = outer_query.subq_aliases.union(self.subq_aliases)
         change_map = OrderedDict()
-        tables = list(self.tables)
-        for pos, alias in enumerate(tables):
+        for pos, alias in enumerate(self.alias_map):
             new_alias = '%s%d' % (self.alias_prefix, pos)
             change_map[alias] = new_alias
-            tables[pos] = new_alias
-        self.tables = tuple(tables)
         self.change_aliases(change_map)
 
     def get_initial_alias(self):
@@ -878,8 +870,8 @@ class Query:
         Return the first alias for this query, after increasing its reference
         count.
         """
-        if self.tables:
-            alias = self.tables[0]
+        if self.alias_map:
+            alias = self.base_table
             self.ref_alias(alias)
         else:
             alias = self.join(BaseTable(self.get_meta().db_table, None))
@@ -895,27 +887,16 @@ class Query:
 
     def join(self, join, reuse=None):
         """
-        Return an alias for the join in 'connection', either reusing an
-        existing alias for that join or creating a new one. 'connection' is a
-        tuple (lhs, table, join_cols) where 'lhs' is either an existing
-        table alias or a table name. 'join_cols' is a tuple of tuples containing
-        columns to join on ((l_id1, r_id1), (l_id2, r_id2)). The join corresponds
-        to the SQL equivalent of::
+        Return an alias for the 'join', either reusing an existing alias for
+        that join or creating a new one. 'join' is either a
+        sql.datastructures.BaseTable or Join.
 
-            lhs.l_id1 = table.r_id1 AND lhs.l_id2 = table.r_id2
-
-        The 'reuse' parameter can be either None which means all joins
-        (matching the connection) are reusable, or it can be a set containing
-        the aliases that can be reused.
+        The 'reuse' parameter can be either None which means all joins are
+        reusable, or it can be a set containing the aliases that can be reused.
 
         A join is always created as LOUTER if the lhs alias is LOUTER to make
-        sure we do not generate chains like t1 LOUTER t2 INNER t3. All new
-        joins are created as LOUTER if nullable is True.
-
-        If 'nullable' is True, the join can potentially involve NULL values and
-        is a candidate for promotion (to "left outer") when combining querysets.
-
-        The 'join_field' is the field we are joining along (if any).
+        sure chains like t1 LOUTER t2 INNER t3 aren't generated. All new
+        joins are created as LOUTER if the join is nullable.
         """
         reuse = [a for a, j in self.alias_map.items()
                  if (reuse is None or a in reuse) and j == join]
@@ -1251,8 +1232,7 @@ class Query:
         # (Consider case where rel_a is LOUTER and rel_a__col=1 is added - if
         # rel_a doesn't produce any rows, then the whole condition must fail.
         # So, demotion is OK.
-        existing_inner = set(
-            (a for a in self.alias_map if self.alias_map[a].join_type == INNER))
+        existing_inner = {a for a in self.alias_map if self.alias_map[a].join_type == INNER}
         clause, _ = self._add_q(q_object, self.used_aliases)
         if clause:
             self.where.add(clause, AND)
@@ -1437,8 +1417,8 @@ class Query:
         for pos, info in enumerate(reversed(path)):
             if len(joins) == 1 or not info.direct:
                 break
-            join_targets = set(t.column for t in info.join_field.foreign_related_fields)
-            cur_targets = set(t.column for t in targets)
+            join_targets = {t.column for t in info.join_field.foreign_related_fields}
+            cur_targets = {t.column for t in targets}
             if not cur_targets.issubset(join_targets):
                 break
             targets_dict = {r[1].column: r[0] for r in info.join_field.related_fields if r[1].column in cur_targets}
@@ -1923,7 +1903,10 @@ class Query:
         # Trim and operate only on tables that were generated for
         # the lookup part of the query. That is, avoid trimming
         # joins generated for F() expressions.
-        lookup_tables = [t for t in self.tables if t in self._lookup_joins or t == self.tables[0]]
+        lookup_tables = [
+            t for t in self.alias_map
+            if t in self._lookup_joins or t == self.base_table
+        ]
         for trimmed_paths, path in enumerate(all_paths):
             if path.m2m:
                 break
@@ -1963,7 +1946,7 @@ class Query:
             select_alias = lookup_tables[trimmed_paths]
         # The found starting point is likely a Join instead of a BaseTable reference.
         # But the first entry in the query's FROM clause must not be a JOIN.
-        for table in self.tables:
+        for table in self.alias_map:
             if self.alias_refcount[table] > 0:
                 self.alias_map[table] = BaseTable(self.alias_map[table].table_name, table)
                 break

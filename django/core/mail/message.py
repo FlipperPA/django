@@ -204,10 +204,6 @@ class EmailMessage:
         """
         Initialize a single email message (which can be sent to multiple
         recipients).
-
-        All string arguments used to create the message can be strings
-        or UTF-8 bytestrings. The SafeMIMEText class will handle any
-        necessary encoding conversions.
         """
         if to:
             if isinstance(to, str):
@@ -260,9 +256,9 @@ class EmailMessage:
         msg['From'] = self.extra_headers.get('From', self.from_email)
         msg['To'] = self.extra_headers.get('To', ', '.join(map(str, self.to)))
         if self.cc:
-            msg['Cc'] = ', '.join(map(str, self.cc))
+            msg['Cc'] = ', '.join(str(cc) for cc in self.cc)
         if self.reply_to:
-            msg['Reply-To'] = self.extra_headers.get('Reply-To', ', '.join(map(str, self.reply_to)))
+            msg['Reply-To'] = self.extra_headers.get('Reply-To', ', '.join(str(r) for r in self.reply_to))
 
         # Email header names are case-insensitive (RFC 2045), so we have to
         # accommodate that when doing comparisons.
@@ -427,10 +423,6 @@ class EmailMultiAlternatives(EmailMessage):
         """
         Initialize a single email message (which can be sent to multiple
         recipients).
-
-        All string arguments used to create the message can be strings or UTF-8
-        bytestrings. The SafeMIMEText class will handle any necessary encoding
-        conversions.
         """
         super().__init__(
             subject, body, from_email, to, bcc, connection, attachments,

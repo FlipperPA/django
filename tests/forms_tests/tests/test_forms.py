@@ -920,7 +920,7 @@ Java</label></li>
         f = SongForm(data)
         self.assertEqual(f.errors, {})
 
-        data = MultiValueDict(dict(name=['Yesterday'], composers=['J', 'P']))
+        data = MultiValueDict({'name': ['Yesterday'], 'composers': ['J', 'P']})
         f = SongForm(data)
         self.assertEqual(f.errors, {})
 
@@ -946,7 +946,7 @@ Java</label></li>
                 widget=MultipleHiddenInput,
             )
 
-        f = SongFormHidden(MultiValueDict(dict(name=['Yesterday'], composers=['J', 'P'])), auto_id=False)
+        f = SongFormHidden(MultiValueDict({'name': ['Yesterday'], 'composers': ['J', 'P']}), auto_id=False)
         self.assertHTMLEqual(
             f.as_ul(),
             """<li>Name: <input type="text" name="name" value="Yesterday" required />
@@ -1558,19 +1558,19 @@ value="Should escape &lt; &amp; &gt; and &lt;script&gt;alert(&#39;xss&#39;)&lt;/
                 self.order_fields(field_order=TestForm.field_order)
 
         p = TestFormParent()
-        self.assertEqual(list(p.fields.keys()), TestFormParent.field_order)
+        self.assertEqual(list(p.fields), TestFormParent.field_order)
         p = TestFormRemove()
-        self.assertEqual(list(p.fields.keys()), TestForm.field_order)
+        self.assertEqual(list(p.fields), TestForm.field_order)
         p = TestFormMissing()
-        self.assertEqual(list(p.fields.keys()), TestForm.field_order)
+        self.assertEqual(list(p.fields), TestForm.field_order)
         p = TestForm()
-        self.assertEqual(list(p.fields.keys()), TestFormMissing.field_order)
+        self.assertEqual(list(p.fields), TestFormMissing.field_order)
         p = TestFormInit()
         order = list(TestForm.field_order) + ['field1']
-        self.assertEqual(list(p.fields.keys()), order)
+        self.assertEqual(list(p.fields), order)
         TestForm.field_order = ['unknown']
         p = TestForm()
-        self.assertEqual(list(p.fields.keys()), ['field1', 'field2', 'field4', 'field5', 'field6', 'field3'])
+        self.assertEqual(list(p.fields), ['field1', 'field2', 'field4', 'field5', 'field6', 'field3'])
 
     def test_form_html_attributes(self):
         # Some Field classes have an effect on the HTML attributes of their associated
@@ -3008,7 +3008,8 @@ Good luck picking a username that doesn&#39;t already exist.</p>
         ]
 
         for args, kwargs, expected in testcases:
-            self.assertHTMLEqual(boundfield.label_tag(*args, **kwargs), expected)
+            with self.subTest(args=args, kwargs=kwargs):
+                self.assertHTMLEqual(boundfield.label_tag(*args, **kwargs), expected)
 
     def test_boundfield_label_tag_no_id(self):
         """
@@ -3215,13 +3216,14 @@ Good luck picking a username that doesn&#39;t already exist.</p>
         for error in control:
             self.assertInHTML(error, errors)
 
-        errors = json.loads(form.errors.as_json())
+        errors = form.errors.get_json_data()
         control = {
             'foo': [{'code': 'required', 'message': 'This field is required.'}],
             'bar': [{'code': 'required', 'message': 'This field is required.'}],
             '__all__': [{'code': 'secret', 'message': 'Non-field error.'}]
         }
         self.assertEqual(errors, control)
+        self.assertEqual(json.dumps(errors), form.errors.as_json())
 
     def test_error_dict_as_json_escape_html(self):
         """#21962 - adding html escape flag to ErrorDict"""
@@ -3246,8 +3248,13 @@ Good luck picking a username that doesn&#39;t already exist.</p>
         errors = json.loads(form.errors.as_json())
         self.assertEqual(errors, control)
 
+        escaped_error = '&lt;p&gt;Non-field error.&lt;/p&gt;'
+        self.assertEqual(
+            form.errors.get_json_data(escape_html=True)['__all__'][0]['message'],
+            escaped_error
+        )
         errors = json.loads(form.errors.as_json(escape_html=True))
-        control['__all__'][0]['message'] = '&lt;p&gt;Non-field error.&lt;/p&gt;'
+        control['__all__'][0]['message'] = escaped_error
         self.assertEqual(errors, control)
 
     def test_error_list(self):
@@ -3269,10 +3276,12 @@ Good luck picking a username that doesn&#39;t already exist.</p>
             '<ul class="errorlist"><li>Foo</li><li>Foobar</li></ul>'
         )
 
+        errors = e.get_json_data()
         self.assertEqual(
-            json.loads(e.as_json()),
+            errors,
             [{"message": "Foo", "code": ""}, {"message": "Foobar", "code": "foobar"}]
         )
+        self.assertEqual(json.dumps(errors), e.as_json())
 
     def test_error_list_class_not_specified(self):
         e = ErrorList()
@@ -3381,7 +3390,7 @@ Good luck picking a username that doesn&#39;t already exist.</p>
             email = EmailField()
             comment = CharField()
 
-        data = dict(email='invalid')
+        data = {'email': 'invalid'}
         f = CommentForm(data, auto_id=False, error_class=DivErrorList)
         self.assertHTMLEqual(f.as_p(), """<p>Name: <input type="text" name="name" maxlength="50" /></p>
 <div class="errorlist"><div class="error">Enter a valid email address.</div></div>

@@ -4,6 +4,7 @@ and database field objects.
 """
 
 from collections import OrderedDict
+from contextlib import suppress
 from itertools import chain
 
 from django.core.exceptions import (
@@ -92,10 +93,18 @@ def model_to_dict(instance, fields=None, exclude=None):
     return data
 
 
+def apply_limit_choices_to_to_formfield(formfield):
+    """Apply limit_choices_to to the formfield's queryset if needed."""
+    if hasattr(formfield, 'queryset') and hasattr(formfield, 'get_limit_choices_to'):
+        limit_choices_to = formfield.get_limit_choices_to()
+        if limit_choices_to is not None:
+            formfield.queryset = formfield.queryset.complex_filter(limit_choices_to)
+
+
 def fields_for_model(model, fields=None, exclude=None, widgets=None,
                      formfield_callback=None, localized_fields=None,
                      labels=None, help_texts=None, error_messages=None,
-                     field_classes=None):
+                     field_classes=None, *, apply_limit_choices_to=True):
     """
     Return an ``OrderedDict`` containing form fields for the given model.
 
@@ -122,6 +131,9 @@ def fields_for_model(model, fields=None, exclude=None, widgets=None,
 
     ``field_classes`` is a dictionary of model field names mapped to a form
     field class.
+
+    ``apply_limit_choices_to`` is a boolean indicating if limit_choices_to
+    should be applied to a field's queryset.
     """
     field_list = []
     ignored = []
@@ -165,11 +177,8 @@ def fields_for_model(model, fields=None, exclude=None, widgets=None,
             formfield = formfield_callback(f, **kwargs)
 
         if formfield:
-            # Apply ``limit_choices_to``.
-            if hasattr(formfield, 'queryset') and hasattr(formfield, 'get_limit_choices_to'):
-                limit_choices_to = formfield.get_limit_choices_to()
-                if limit_choices_to is not None:
-                    formfield.queryset = formfield.queryset.complex_filter(limit_choices_to)
+            if apply_limit_choices_to:
+                apply_limit_choices_to_to_formfield(formfield)
             field_list.append((f.name, formfield))
         else:
             ignored.append(f.name)
@@ -240,16 +249,17 @@ class ModelFormMetaclass(DeclarativeFieldsMetaclass):
                 # fields from the model"
                 opts.fields = None
 
-            fields = fields_for_model(opts.model, opts.fields, opts.exclude,
-                                      opts.widgets, formfield_callback,
-                                      opts.localized_fields, opts.labels,
-                                      opts.help_texts, opts.error_messages,
-                                      opts.field_classes)
+            fields = fields_for_model(
+                opts.model, opts.fields, opts.exclude, opts.widgets,
+                formfield_callback, opts.localized_fields, opts.labels,
+                opts.help_texts, opts.error_messages, opts.field_classes,
+                # limit_choices_to will be applied during ModelForm.__init__().
+                apply_limit_choices_to=False,
+            )
 
             # make sure opts.fields doesn't specify an invalid field
             none_model_fields = [k for k, v in fields.items() if not v]
-            missing_fields = (set(none_model_fields) -
-                              set(new_class.declared_fields.keys()))
+            missing_fields = set(none_model_fields) - set(new_class.declared_fields)
             if missing_fields:
                 message = 'Unknown field(s) (%s) specified for %s'
                 message = message % (', '.join(missing_fields),
@@ -291,6 +301,8 @@ class BaseModelForm(BaseForm):
             data, files, auto_id, prefix, object_data, error_class,
             label_suffix, empty_permitted, use_required_attribute=use_required_attribute,
         )
+        for formfield in self.fields.values():
+            apply_limit_choices_to_to_formfield(formfield)
 
     def _get_validation_exclusions(self):
         """
@@ -317,7 +329,7 @@ class BaseModelForm(BaseForm):
 
             # Exclude fields that failed form validation. There's no need for
             # the model fields to validate them as well.
-            elif field in self._errors.keys():
+            elif field in self._errors:
                 exclude.append(f.name)
 
             # Exclude empty fields that are not required by the form, if the
@@ -578,22 +590,37 @@ class BaseModelFormSet(BaseFormSet):
         return field.to_python
 
     def _construct_form(self, i, **kwargs):
-        if self.is_bound and i < self.initial_form_count():
-            pk_key = "%s-%s" % (self.add_prefix(i), self.model._meta.pk.name)
-            pk = self.data[pk_key]
-            pk_field = self.model._meta.pk
-            to_python = self._get_to_python(pk_field)
-            pk = to_python(pk)
-            kwargs['instance'] = self._existing_object(pk)
-        if i < self.initial_form_count() and 'instance' not in kwargs:
-            kwargs['instance'] = self.get_queryset()[i]
-        if i >= self.initial_form_count() and self.initial_extra:
+        pk_required = False
+        if i < self.initial_form_count():
+            pk_required = True
+            if self.is_bound:
+                pk_key = '%s-%s' % (self.add_prefix(i), self.model._meta.pk.name)
+                try:
+                    pk = self.data[pk_key]
+                except KeyError:
+                    # The primary key is missing. The user may have tampered
+                    # with POST data.
+                    pass
+                else:
+                    to_python = self._get_to_python(self.model._meta.pk)
+                    try:
+                        pk = to_python(pk)
+                    except ValidationError:
+                        # The primary key exists but is an invalid value. The
+                        # user may have tampered with POST data.
+                        pass
+                    else:
+                        kwargs['instance'] = self._existing_object(pk)
+            else:
+                kwargs['instance'] = self.get_queryset()[i]
+        elif self.initial_extra:
             # Set initial values for extra forms
-            try:
+            with suppress(IndexError):
                 kwargs['initial'] = self.initial_extra[i - self.initial_form_count()]
-            except IndexError:
-                pass
-        return super()._construct_form(i, **kwargs)
+        form = super()._construct_form(i, **kwargs)
+        if pk_required:
+            form.fields[self.model._meta.pk.name].required = True
+        return form
 
     def get_queryset(self):
         if not hasattr(self, '_queryset'):
@@ -1129,10 +1156,10 @@ class ModelChoiceField(ChoiceField):
     }
     iterator = ModelChoiceIterator
 
-    def __init__(self, queryset, empty_label="---------",
+    def __init__(self, queryset, *, empty_label="---------",
                  required=True, widget=None, label=None, initial=None,
                  help_text='', to_field_name=None, limit_choices_to=None,
-                 *args, **kwargs):
+                 **kwargs):
         if required and (initial is not None):
             self.empty_label = None
         else:
@@ -1140,8 +1167,10 @@ class ModelChoiceField(ChoiceField):
 
         # Call Field instead of ChoiceField __init__() because we don't need
         # ChoiceField.__init__().
-        Field.__init__(self, required, widget, label, initial, help_text,
-                       *args, **kwargs)
+        Field.__init__(
+            self, required=required, widget=widget, label=label,
+            initial=initial, help_text=help_text, **kwargs
+        )
         self.queryset = queryset
         self.limit_choices_to = limit_choices_to   # limit the queryset later.
         self.to_field_name = to_field_name
@@ -1221,6 +1250,8 @@ class ModelChoiceField(ChoiceField):
         return Field.validate(self, value)
 
     def has_changed(self, initial, data):
+        if self.disabled:
+            return False
         initial_value = initial if initial is not None else ''
         data_value = data if data is not None else ''
         return str(self.prepare_value(initial_value)) != str(data_value)
@@ -1237,12 +1268,8 @@ class ModelMultipleChoiceField(ModelChoiceField):
         'invalid_pk_value': _('"%(pk)s" is not a valid value.')
     }
 
-    def __init__(self, queryset, required=True, widget=None, label=None,
-                 initial=None, help_text='', *args, **kwargs):
-        super().__init__(
-            queryset, None, required, widget, label, initial, help_text,
-            *args, **kwargs
-        )
+    def __init__(self, queryset, **kwargs):
+        super().__init__(queryset, empty_label=None, **kwargs)
 
     def to_python(self, value):
         if not value:
@@ -1290,7 +1317,7 @@ class ModelMultipleChoiceField(ModelChoiceField):
                     params={'pk': pk},
                 )
         qs = self.queryset.filter(**{'%s__in' % key: value})
-        pks = set(str(getattr(o, key)) for o in qs)
+        pks = {str(getattr(o, key)) for o in qs}
         for val in value:
             if str(val) not in pks:
                 raise ValidationError(
@@ -1304,18 +1331,21 @@ class ModelMultipleChoiceField(ModelChoiceField):
         if (hasattr(value, '__iter__') and
                 not isinstance(value, str) and
                 not hasattr(value, '_meta')):
-            return [super(ModelMultipleChoiceField, self).prepare_value(v) for v in value]
+            prepare_value = super().prepare_value
+            return [prepare_value(v) for v in value]
         return super().prepare_value(value)
 
     def has_changed(self, initial, data):
+        if self.disabled:
+            return False
         if initial is None:
             initial = []
         if data is None:
             data = []
         if len(initial) != len(data):
             return True
-        initial_set = set(str(value) for value in self.prepare_value(initial))
-        data_set = set(str(value) for value in data)
+        initial_set = {str(value) for value in self.prepare_value(initial)}
+        data_set = {str(value) for value in data}
         return data_set != initial_set
 
 

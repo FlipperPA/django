@@ -1,11 +1,14 @@
 import warnings
+from collections import namedtuple
 
 import cx_Oracle
 
 from django.db.backends.base.introspection import (
-    BaseDatabaseIntrospection, FieldInfo, TableInfo,
+    BaseDatabaseIntrospection, FieldInfo as BaseFieldInfo, TableInfo,
 )
 from django.utils.deprecation import RemovedInDjango21Warning
+
+FieldInfo = namedtuple('FieldInfo', BaseFieldInfo._fields + ('is_autofield',))
 
 
 class DatabaseIntrospection(BaseDatabaseIntrospection):
@@ -27,14 +30,15 @@ class DatabaseIntrospection(BaseDatabaseIntrospection):
     cache_bust_counter = 1
 
     def get_field_type(self, data_type, description):
-        # If it's a NUMBER with scale == 0, consider it an IntegerField
         if data_type == cx_Oracle.NUMBER:
             precision, scale = description[4:6]
             if scale == 0:
                 if precision > 11:
-                    return 'BigIntegerField'
+                    return 'BigAutoField' if description.is_autofield else 'BigIntegerField'
                 elif precision == 1:
                     return 'BooleanField'
+                elif description.is_autofield:
+                    return 'AutoField'
                 else:
                     return 'IntegerField'
             elif scale == -127:
@@ -61,12 +65,16 @@ class DatabaseIntrospection(BaseDatabaseIntrospection):
                 CASE
                     WHEN char_used IS NULL THEN data_length
                     ELSE char_length
-                END as internal_size
+                END as internal_size,
+                CASE
+                    WHEN identity_column = 'YES' THEN 1
+                    ELSE 0
+                END as is_autofield
             FROM user_tab_cols
             WHERE table_name = UPPER(%s)""", [table_name])
         field_map = {
-            column: (internal_size, default if default != 'NULL' else None)
-            for column, default, internal_size in cursor.fetchall()
+            column: (internal_size, default if default != 'NULL' else None, is_autofield)
+            for column, default, internal_size, is_autofield in cursor.fetchall()
         }
         self.cache_bust_counter += 1
         cursor.execute("SELECT * FROM {} WHERE ROWNUM < 2 AND {} > 0".format(
@@ -75,14 +83,14 @@ class DatabaseIntrospection(BaseDatabaseIntrospection):
         description = []
         for desc in cursor.description:
             name = desc[0]
-            internal_size, default = field_map[name]
+            internal_size, default, is_autofield = field_map[name]
             name = name % {}  # cx_Oracle, for some reason, doubles percent signs.
             description.append(FieldInfo(*(
                 (name.lower(),) +
                 desc[1:3] +
                 (internal_size, desc[4] or 0, desc[5] or 0) +
                 desc[6:] +
-                (default,)
+                (default, is_autofield)
             )))
         return description
 
@@ -97,17 +105,11 @@ class DatabaseIntrospection(BaseDatabaseIntrospection):
         """
         table_name = table_name.upper()
         cursor.execute("""
-    SELECT ta.column_name, tb.table_name, tb.column_name
-    FROM   user_constraints, USER_CONS_COLUMNS ca, USER_CONS_COLUMNS cb,
-           user_tab_cols ta, user_tab_cols tb
+    SELECT ca.column_name, cb.table_name, cb.column_name
+    FROM   user_constraints, USER_CONS_COLUMNS ca, USER_CONS_COLUMNS cb
     WHERE  user_constraints.table_name = %s AND
-           ta.table_name = user_constraints.table_name AND
-           ta.column_name = ca.column_name AND
-           ca.table_name = ta.table_name AND
            user_constraints.constraint_name = ca.constraint_name AND
            user_constraints.r_constraint_name = cb.constraint_name AND
-           cb.table_name = tb.table_name AND
-           cb.column_name = tb.column_name AND
            ca.position = cb.position""", [table_name])
 
         relations = {}
@@ -171,29 +173,19 @@ class DatabaseIntrospection(BaseDatabaseIntrospection):
         cursor.execute("""
             SELECT
                 user_constraints.constraint_name,
-                LOWER(cols.column_name) AS column_name,
+                LISTAGG(LOWER(cols.column_name), ',') WITHIN GROUP (ORDER BY cols.position),
                 CASE user_constraints.constraint_type
                     WHEN 'P' THEN 1
                     ELSE 0
                 END AS is_primary_key,
                 CASE
-                    WHEN EXISTS (
-                        SELECT 1
-                        FROM user_indexes
-                        WHERE user_indexes.index_name = user_constraints.index_name
-                        AND user_indexes.uniqueness = 'UNIQUE'
-                    )
-                    THEN 1
+                    WHEN user_constraints.constraint_type IN ('P', 'U') THEN 1
                     ELSE 0
                 END AS is_unique,
                 CASE user_constraints.constraint_type
                     WHEN 'C' THEN 1
                     ELSE 0
-                END AS is_check_constraint,
-                CASE
-                    WHEN user_constraints.constraint_type IN ('P', 'U') THEN 1
-                    ELSE 0
-                END AS has_index
+                END AS is_check_constraint
             FROM
                 user_constraints
             LEFT OUTER JOIN
@@ -201,57 +193,51 @@ class DatabaseIntrospection(BaseDatabaseIntrospection):
             WHERE
                 user_constraints.constraint_type = ANY('P', 'U', 'C')
                 AND user_constraints.table_name = UPPER(%s)
-            ORDER BY cols.position
+            GROUP BY user_constraints.constraint_name, user_constraints.constraint_type
         """, [table_name])
-        for constraint, column, pk, unique, check, index in cursor.fetchall():
-            # If we're the first column, make the record
-            if constraint not in constraints:
-                constraints[constraint] = {
-                    "columns": [],
-                    "primary_key": pk,
-                    "unique": unique,
-                    "foreign_key": None,
-                    "check": check,
-                    "index": index,  # All P and U come with index
-                }
-            # Record the details
-            constraints[constraint]['columns'].append(column)
+        for constraint, columns, pk, unique, check in cursor.fetchall():
+            constraints[constraint] = {
+                'columns': columns.split(','),
+                'primary_key': pk,
+                'unique': unique,
+                'foreign_key': None,
+                'check': check,
+                'index': unique,  # All uniques come with an index
+            }
         # Foreign key constraints
         cursor.execute("""
             SELECT
                 cons.constraint_name,
-                LOWER(cols.column_name) AS column_name,
+                LISTAGG(LOWER(cols.column_name), ',') WITHIN GROUP (ORDER BY cols.position),
                 LOWER(rcols.table_name),
                 LOWER(rcols.column_name)
             FROM
                 user_constraints cons
             INNER JOIN
-                user_cons_columns rcols ON rcols.constraint_name = cons.r_constraint_name
+                user_cons_columns rcols ON rcols.constraint_name = cons.r_constraint_name AND rcols.position = 1
             LEFT OUTER JOIN
                 user_cons_columns cols ON cons.constraint_name = cols.constraint_name
             WHERE
                 cons.constraint_type = 'R' AND
                 cons.table_name = UPPER(%s)
-            ORDER BY cols.position
+            GROUP BY cons.constraint_name, rcols.table_name, rcols.column_name
         """, [table_name])
-        for constraint, column, other_table, other_column in cursor.fetchall():
-            # If we're the first column, make the record
-            if constraint not in constraints:
-                constraints[constraint] = {
-                    "columns": [],
-                    "primary_key": False,
-                    "unique": False,
-                    "foreign_key": (other_table, other_column),
-                    "check": False,
-                    "index": False,
-                }
-            # Record the details
-            constraints[constraint]['columns'].append(column)
+        for constraint, columns, other_table, other_column in cursor.fetchall():
+            constraints[constraint] = {
+                'primary_key': False,
+                'unique': False,
+                'foreign_key': (other_table, other_column),
+                'check': False,
+                'index': False,
+                'columns': columns.split(','),
+            }
         # Now get indexes
         cursor.execute("""
             SELECT
-                cols.index_name, LOWER(cols.column_name), cols.descend,
-                LOWER(ind.index_type)
+                ind.index_name,
+                LOWER(ind.index_type),
+                LISTAGG(LOWER(cols.column_name), ',') WITHIN GROUP (ORDER BY cols.column_position),
+                LISTAGG(cols.descend, ',') WITHIN GROUP (ORDER BY cols.column_position)
             FROM
                 user_ind_columns cols, user_indexes ind
             WHERE
@@ -259,24 +245,19 @@ class DatabaseIntrospection(BaseDatabaseIntrospection):
                 NOT EXISTS (
                     SELECT 1
                     FROM user_constraints cons
-                    WHERE cols.index_name = cons.index_name
+                    WHERE ind.index_name = cons.index_name
                 ) AND cols.index_name = ind.index_name
-            ORDER BY cols.column_position
+            GROUP BY ind.index_name, ind.index_type
         """, [table_name])
-        for constraint, column, order, type_ in cursor.fetchall():
-            # If we're the first column, make the record
-            if constraint not in constraints:
-                constraints[constraint] = {
-                    "columns": [],
-                    "orders": [],
-                    "primary_key": False,
-                    "unique": False,
-                    "foreign_key": None,
-                    "check": False,
-                    "index": True,
-                    "type": 'idx' if type_ == 'normal' else type_,
-                }
-            # Record the details
-            constraints[constraint]['columns'].append(column)
-            constraints[constraint]['orders'].append(order)
+        for constraint, type_, columns, orders in cursor.fetchall():
+            constraints[constraint] = {
+                'primary_key': False,
+                'unique': False,
+                'foreign_key': None,
+                'check': False,
+                'index': True,
+                'type': 'idx' if type_ == 'normal' else type_,
+                'columns': columns.split(','),
+                'orders': orders.split(','),
+            }
         return constraints

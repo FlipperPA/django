@@ -18,7 +18,7 @@ class Tag:
 
 class TagField(models.SmallIntegerField):
 
-    def from_db_value(self, value, expression, connection, context):
+    def from_db_value(self, value, expression, connection):
         if value is None:
             return value
         return Tag(int(value))
@@ -71,6 +71,7 @@ class OtherTypesArrayModel(PostgreSQLModel):
 
 class HStoreModel(PostgreSQLModel):
     field = HStoreField(blank=True, null=True)
+    array_field = ArrayField(HStoreField(), null=True)
 
 
 class CharFieldModel(models.Model):
@@ -105,6 +106,7 @@ class CITestModel(PostgreSQLModel):
     name = CICharField(primary_key=True, max_length=255)
     email = CIEmailField()
     description = CITextField()
+    array_field = ArrayField(CITextField(), null=True)
 
     def __str__(self):
         return self.name

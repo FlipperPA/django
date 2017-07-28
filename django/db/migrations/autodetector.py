@@ -1,5 +1,6 @@
 import functools
 import re
+from contextlib import suppress
 from itertools import chain
 
 from django.conf import settings
@@ -133,7 +134,7 @@ class MigrationAutodetector:
         self.new_model_keys = []
         self.new_proxy_keys = []
         self.new_unmanaged_keys = []
-        for al, mn in sorted(self.from_state.models.keys()):
+        for al, mn in sorted(self.from_state.models):
             model = self.old_apps.get_model(al, mn)
             if not model._meta.managed:
                 self.old_unmanaged_keys.append((al, mn))
@@ -143,7 +144,7 @@ class MigrationAutodetector:
                 else:
                     self.old_model_keys.append((al, mn))
 
-        for al, mn in sorted(self.to_state.models.keys()):
+        for al, mn in sorted(self.to_state.models):
             model = self.new_apps.get_model(al, mn)
             if not model._meta.managed:
                 self.new_unmanaged_keys.append((al, mn))
@@ -249,7 +250,7 @@ class MigrationAutodetector:
             # try to chop it off from the rest and continue, but we only
             # do this if we've already been through the list once before
             # without any chopping and nothing has changed.
-            for app_label in sorted(self.generated_operations.keys()):
+            for app_label in sorted(self.generated_operations):
                 chopped = []
                 dependencies = set()
                 for operation in list(self.generated_operations[app_label]):
@@ -429,7 +430,7 @@ class MigrationAutodetector:
         Place potential swappable models first in lists of created models (only
         real way to solve #22783).
         """
-        try:
+        with suppress(LookupError):
             model = self.new_apps.get_model(item[0], item[1])
             base_names = [base.__name__ for base in model.__bases__]
             string_version = "%s.%s" % (item[0], item[1])
@@ -440,8 +441,6 @@ class MigrationAutodetector:
                 settings.AUTH_USER_MODEL.lower() == string_version.lower()
             ):
                 return ("___" + item[0], "___" + item[1])
-        except LookupError:
-            pass
         return item
 
     def generate_renamed_models(self):
@@ -1065,14 +1064,14 @@ class MigrationAutodetector:
             old_model_name = self.renamed_models.get((app_label, model_name), model_name)
             old_model_state = self.from_state.models[app_label, old_model_name]
             new_model_state = self.to_state.models[app_label, model_name]
-            old_options = dict(
-                option for option in old_model_state.options.items()
-                if option[0] in AlterModelOptions.ALTER_OPTION_KEYS
-            )
-            new_options = dict(
-                option for option in new_model_state.options.items()
-                if option[0] in AlterModelOptions.ALTER_OPTION_KEYS
-            )
+            old_options = {
+                key: value for key, value in old_model_state.options.items()
+                if key in AlterModelOptions.ALTER_OPTION_KEYS
+            }
+            new_options = {
+                key: value for key, value in new_model_state.options.items()
+                if key in AlterModelOptions.ALTER_OPTION_KEYS
+            }
             if old_options != new_options:
                 self.add_operation(
                     app_label,
@@ -1193,7 +1192,7 @@ class MigrationAutodetector:
             for app_label in list(required_apps):
                 required_apps.update(app_dependencies.get(app_label, set()))
         # Remove all migrations that aren't needed
-        for app_label in list(changes.keys()):
+        for app_label in list(changes):
             if app_label not in required_apps:
                 del changes[app_label]
         return changes

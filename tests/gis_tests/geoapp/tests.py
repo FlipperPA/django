@@ -20,7 +20,6 @@ from .models import (
 )
 
 
-@skipUnlessDBFeature("gis_enabled")
 class GeoModelTest(TestCase):
     fixtures = ['initial']
 
@@ -67,7 +66,7 @@ class GeoModelTest(TestCase):
         nullcity.delete()
 
         # Testing on a Polygon
-        shell = LinearRing((0, 0), (0, 100), (100, 100), (100, 0), (0, 0))
+        shell = LinearRing((0, 0), (0, 90), (100, 90), (100, 0), (0, 0))
         inner = LinearRing((40, 40), (40, 60), (60, 60), (60, 40), (40, 40))
 
         # Creating a State object using a built Polygon
@@ -80,11 +79,10 @@ class GeoModelTest(TestCase):
         self.assertEqual(ply, ns.poly)
 
         # Testing the `ogr` and `srs` lazy-geometry properties.
-        if gdal.HAS_GDAL:
-            self.assertIsInstance(ns.poly.ogr, gdal.OGRGeometry)
-            self.assertEqual(ns.poly.wkb, ns.poly.ogr.wkb)
-            self.assertIsInstance(ns.poly.srs, gdal.SpatialReference)
-            self.assertEqual('WGS 84', ns.poly.srs.name)
+        self.assertIsInstance(ns.poly.ogr, gdal.OGRGeometry)
+        self.assertEqual(ns.poly.wkb, ns.poly.ogr.wkb)
+        self.assertIsInstance(ns.poly.srs, gdal.SpatialReference)
+        self.assertEqual('WGS 84', ns.poly.srs.name)
 
         # Changing the interior ring on the poly attribute.
         new_inner = LinearRing((30, 30), (30, 70), (70, 70), (70, 30), (30, 30))
@@ -224,7 +222,6 @@ class GeoModelTest(TestCase):
             self.assertEqual(feature.geom.srid, g.srid)
 
 
-@skipUnlessDBFeature("gis_enabled")
 class GeoLookupTest(TestCase):
     fixtures = ['initial']
 
@@ -451,8 +448,19 @@ class GeoLookupTest(TestCase):
             self.assertEqual('Texas', Country.objects.get(mpoly__relate=(pnt2, intersects_mask)).name)
             self.assertEqual('Lawrence', City.objects.get(point__relate=(ks.poly, intersects_mask)).name)
 
+        # With a complex geometry expression
+        mask = 'anyinteract' if oracle else within_mask
+        self.assertFalse(City.objects.exclude(point__relate=(functions.Union('point', 'point'), mask)))
 
-@skipUnlessDBFeature("gis_enabled")
+    def test_gis_lookups_with_complex_expressions(self):
+        multiple_arg_lookups = {'dwithin', 'relate'}  # These lookups are tested elsewhere.
+        lookups = connection.ops.gis_operators.keys() - multiple_arg_lookups
+        self.assertTrue(lookups, 'No lookups found')
+        for lookup in lookups:
+            with self.subTest(lookup):
+                City.objects.filter(**{'point__' + lookup: functions.Union('point', 'point')}).exists()
+
+
 class GeoQuerySetTest(TestCase):
     # TODO: GeoQuerySet is removed, organize these test better.
     fixtures = ['initial']

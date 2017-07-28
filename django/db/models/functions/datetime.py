@@ -2,7 +2,8 @@ from datetime import datetime
 
 from django.conf import settings
 from django.db.models import (
-    DateField, DateTimeField, IntegerField, TimeField, Transform,
+    DateField, DateTimeField, DurationField, IntegerField, TimeField,
+    Transform,
 )
 from django.db.models.lookups import (
     YearExact, YearGt, YearGte, YearLt, YearLte,
@@ -49,6 +50,10 @@ class Extract(TimezoneMixin, Transform):
             sql = connection.ops.date_extract_sql(self.lookup_name, sql)
         elif isinstance(lhs_output_field, TimeField):
             sql = connection.ops.time_extract_sql(self.lookup_name, sql)
+        elif isinstance(lhs_output_field, DurationField):
+            if not connection.features.has_native_duration_field:
+                raise ValueError('Extract requires native DurationField database support.')
+            sql = connection.ops.time_extract_sql(self.lookup_name, sql)
         else:
             # resolve_expression has already validated the output_field so this
             # assert should never be hit.
@@ -58,8 +63,11 @@ class Extract(TimezoneMixin, Transform):
     def resolve_expression(self, query=None, allow_joins=True, reuse=None, summarize=False, for_save=False):
         copy = super().resolve_expression(query, allow_joins, reuse, summarize, for_save)
         field = copy.lhs.output_field
-        if not isinstance(field, (DateField, DateTimeField, TimeField)):
-            raise ValueError('Extract input expression must be DateField, DateTimeField, or TimeField.')
+        if not isinstance(field, (DateField, DateTimeField, TimeField, DurationField)):
+            raise ValueError(
+                'Extract input expression must be DateField, DateTimeField, '
+                'TimeField, or DurationField.'
+            )
         # Passing dates to functions expecting datetimes is most likely a mistake.
         if type(field) == DateField and copy.lookup_name in ('hour', 'minute', 'second'):
             raise ValueError(
@@ -101,6 +109,10 @@ class ExtractWeekDay(Extract):
     lookup_name = 'week_day'
 
 
+class ExtractQuarter(Extract):
+    lookup_name = 'quarter'
+
+
 class ExtractHour(Extract):
     lookup_name = 'hour'
 
@@ -118,6 +130,7 @@ DateField.register_lookup(ExtractMonth)
 DateField.register_lookup(ExtractDay)
 DateField.register_lookup(ExtractWeekDay)
 DateField.register_lookup(ExtractWeek)
+DateField.register_lookup(ExtractQuarter)
 
 TimeField.register_lookup(ExtractHour)
 TimeField.register_lookup(ExtractMinute)
@@ -179,13 +192,13 @@ class TruncBase(TimezoneMixin, Transform):
                 field.name, output_field.__class__.__name__ if explicit_output_field else 'DateTimeField'
             ))
         elif isinstance(field, TimeField) and (
-                isinstance(output_field, DateTimeField) or copy.kind in ('year', 'month', 'day', 'date')):
+                isinstance(output_field, DateTimeField) or copy.kind in ('year', 'quarter', 'month', 'day', 'date')):
             raise ValueError("Cannot truncate TimeField '%s' to %s. " % (
                 field.name, output_field.__class__.__name__ if explicit_output_field else 'DateTimeField'
             ))
         return copy
 
-    def convert_value(self, value, expression, connection, context):
+    def convert_value(self, value, expression, connection):
         if isinstance(self.output_field, DateTimeField):
             if settings.USE_TZ:
                 if value is None:
@@ -214,6 +227,10 @@ class TruncYear(TruncBase):
     kind = 'year'
 
 
+class TruncQuarter(TruncBase):
+    kind = 'quarter'
+
+
 class TruncMonth(TruncBase):
     kind = 'month'
 
@@ -226,9 +243,8 @@ class TruncDate(TruncBase):
     kind = 'date'
     lookup_name = 'date'
 
-    @cached_property
-    def output_field(self):
-        return DateField()
+    def __init__(self, *args, output_field=None, **kwargs):
+        super().__init__(*args, output_field=DateField(), **kwargs)
 
     def as_sql(self, compiler, connection):
         # Cast to date rather than truncate to date.
@@ -242,9 +258,8 @@ class TruncTime(TruncBase):
     kind = 'time'
     lookup_name = 'time'
 
-    @cached_property
-    def output_field(self):
-        return TimeField()
+    def __init__(self, *args, output_field=None, **kwargs):
+        super().__init__(*args, output_field=TimeField(), **kwargs)
 
     def as_sql(self, compiler, connection):
         # Cast to date rather than truncate to date.
