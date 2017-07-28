@@ -35,14 +35,14 @@ from .models import (
     OtherStory, Paper, Parent, ParentWithDependentChildren, ParentWithUUIDPK,
     Person, Persona, Picture, Pizza, Plot, PlotDetails, PlotProxy,
     PluggableSearchPerson, Podcast, Post, PrePopulatedPost,
-    PrePopulatedPostLargeSlug, PrePopulatedSubPost, Promo, Question, Recipe,
-    Recommendation, Recommender, ReferencedByGenRel, ReferencedByInline,
-    ReferencedByParent, RelatedPrepopulated, RelatedWithUUIDPKModel, Report,
-    Reservation, Restaurant, RowLevelChangePermissionModel, Section,
-    ShortMessage, Simple, Sketch, State, Story, StumpJoke, Subscriber,
-    SuperVillain, Telegram, Thing, Topping, UnchangeableObject,
-    UndeletableObject, UnorderedObject, UserMessenger, Villain, Vodcast,
-    Whatsit, Widget, Worker, WorkHour,
+    PrePopulatedPostLargeSlug, PrePopulatedSubPost, Promo, Question,
+    ReadablePizza, Recipe, Recommendation, Recommender, ReferencedByGenRel,
+    ReferencedByInline, ReferencedByParent, RelatedPrepopulated,
+    RelatedWithUUIDPKModel, Report, Reservation, Restaurant,
+    RowLevelChangePermissionModel, Section, ShortMessage, Simple, Sketch,
+    State, Story, StumpJoke, Subscriber, SuperVillain, Telegram, Thing,
+    Topping, UnchangeableObject, UndeletableObject, UnorderedObject,
+    UserMessenger, Villain, Vodcast, Whatsit, Widget, Worker, WorkHour,
 )
 
 
@@ -79,12 +79,15 @@ class ChapterInline(admin.TabularInline):
 
 
 class ChapterXtra1Admin(admin.ModelAdmin):
-    list_filter = ('chap',
-                   'chap__title',
-                   'chap__book',
-                   'chap__book__name',
-                   'chap__book__promo',
-                   'chap__book__promo__name',)
+    list_filter = (
+        'chap',
+        'chap__title',
+        'chap__book',
+        'chap__book__name',
+        'chap__book__promo',
+        'chap__book__promo__name',
+        'guest_author__promo__book',
+    )
 
 
 class ArticleAdmin(admin.ModelAdmin):
@@ -162,7 +165,7 @@ class CustomArticleAdmin(admin.ModelAdmin):
 
 
 class ThingAdmin(admin.ModelAdmin):
-    list_filter = ('color__warm', 'color__value', 'pub_date',)
+    list_filter = ('color', 'color__warm', 'color__value', 'pub_date')
 
 
 class InquisitionAdmin(admin.ModelAdmin):
@@ -967,6 +970,7 @@ site.register(Book, inlines=[ChapterInline])
 site.register(Promo)
 site.register(ChapterXtra1, ChapterXtra1Admin)
 site.register(Pizza, PizzaAdmin)
+site.register(ReadablePizza)
 site.register(Topping, ToppingAdmin)
 site.register(Album, AlbumAdmin)
 site.register(Question)

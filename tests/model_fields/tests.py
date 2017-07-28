@@ -1,3 +1,5 @@
+import pickle
+
 from django import forms
 from django.db import models
 from django.test import SimpleTestCase, TestCase
@@ -5,6 +7,11 @@ from django.test import SimpleTestCase, TestCase
 from .models import (
     Foo, RenamedField, VerboseNameField, Whiz, WhizIter, WhizIterEmpty,
 )
+
+
+class Nested:
+    class Field(models.Field):
+        pass
 
 
 class BasicFieldTests(TestCase):
@@ -30,6 +37,10 @@ class BasicFieldTests(TestCase):
         self.assertEqual(repr(f), '<django.db.models.fields.CharField: a>')
         f = models.fields.CharField()
         self.assertEqual(repr(f), '<django.db.models.fields.CharField>')
+
+    def test_field_repr_nested(self):
+        """__repr__() uses __qualname__ for nested class support."""
+        self.assertEqual(repr(Nested.Field()), '<model_fields.tests.Nested.Field>')
 
     def test_field_name(self):
         """
@@ -75,6 +86,18 @@ class BasicFieldTests(TestCase):
         self.assertGreater(f3, f1)
         self.assertIsNotNone(f1)
         self.assertNotIn(f2, (None, 1, ''))
+
+    def test_field_instance_is_picklable(self):
+        """Field instances can be pickled."""
+        field = models.Field(max_length=100, default='a string')
+        # Must be picklable with this cached property populated (#28188).
+        field._get_default
+        pickle.dumps(field)
+
+    def test_deconstruct_nested_field(self):
+        """deconstruct() uses __qualname__ for nested class support."""
+        name, path, args, kwargs = Nested.Field().deconstruct()
+        self.assertEqual(path, 'model_fields.tests.Nested.Field')
 
 
 class ChoicesTests(SimpleTestCase):

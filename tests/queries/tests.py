@@ -272,7 +272,7 @@ class Queries1Tests(TestCase):
         list(q2)
         combined_query = (q1 & q2).order_by('name').query
         self.assertEqual(len([
-            t for t in combined_query.tables if combined_query.alias_refcount[t]
+            t for t in combined_query.alias_map if combined_query.alias_refcount[t]
         ]), 1)
 
     def test_order_by_join_unref(self):
@@ -499,7 +499,7 @@ class Queries1Tests(TestCase):
             qs,
             ['<Item: four>', '<Item: one>', '<Item: three>', '<Item: two>']
         )
-        self.assertEqual(len(qs.query.tables), 1)
+        self.assertEqual(len(qs.query.alias_map), 1)
 
     def test_tickets_2874_3002(self):
         qs = Item.objects.select_related().order_by('note__note', 'name')
@@ -550,7 +550,7 @@ class Queries1Tests(TestCase):
         # normal. A normal dict would thus fail.)
         s = [('a', '%s'), ('b', '%s')]
         params = ['one', 'two']
-        if {'a': 1, 'b': 2}.keys() == ['a', 'b']:
+        if list({'a': 1, 'b': 2}) == ['a', 'b']:
             s.reverse()
             params.reverse()
 
@@ -731,10 +731,10 @@ class Queries1Tests(TestCase):
                 q.extra(select={'foo': "1"}),
                 []
             )
+            self.assertQuerysetEqual(q.reverse(), [])
             q.query.low_mark = 1
             with self.assertRaisesMessage(AssertionError, 'Cannot change a query once a slice has been taken'):
                 q.extra(select={'foo': "1"})
-            self.assertQuerysetEqual(q.reverse(), [])
             self.assertQuerysetEqual(q.defer('meal'), [])
             self.assertQuerysetEqual(q.only('meal'), [])
 
@@ -2005,10 +2005,10 @@ class QuerysetOrderedTests(unittest.TestCase):
 class SubqueryTests(TestCase):
     @classmethod
     def setUpTestData(cls):
-        DumbCategory.objects.create(id=1)
-        DumbCategory.objects.create(id=2)
-        DumbCategory.objects.create(id=3)
-        DumbCategory.objects.create(id=4)
+        NamedCategory.objects.create(id=1, name='first')
+        NamedCategory.objects.create(id=2, name='second')
+        NamedCategory.objects.create(id=3, name='third')
+        NamedCategory.objects.create(id=4, name='fourth')
 
     def test_ordered_subselect(self):
         "Subselects honor any manual ordering"
@@ -2063,6 +2063,28 @@ class SubqueryTests(TestCase):
 
         DumbCategory.objects.filter(id__in=DumbCategory.objects.order_by('-id')[1:]).delete()
         self.assertEqual(set(DumbCategory.objects.values_list('id', flat=True)), {3})
+
+    def test_distinct_ordered_sliced_subquery(self):
+        # Implicit values('id').
+        self.assertSequenceEqual(
+            NamedCategory.objects.filter(
+                id__in=NamedCategory.objects.distinct().order_by('name')[0:2],
+            ).order_by('name').values_list('name', flat=True), ['first', 'fourth']
+        )
+        # Explicit values('id').
+        self.assertSequenceEqual(
+            NamedCategory.objects.filter(
+                id__in=NamedCategory.objects.distinct().order_by('-name').values('id')[0:2],
+            ).order_by('name').values_list('name', flat=True), ['second', 'third']
+        )
+        # Annotated value.
+        self.assertSequenceEqual(
+            DumbCategory.objects.filter(
+                id__in=DumbCategory.objects.annotate(
+                    double_id=F('id') * 2
+                ).order_by('id').distinct().values('double_id')[0:2],
+            ).order_by('id').values_list('id', flat=True), [2, 4]
+        )
 
 
 class CloneTests(TestCase):

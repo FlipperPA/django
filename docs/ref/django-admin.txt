@@ -240,6 +240,16 @@ are prefixed by ``"###"``.
 The settings module to compare the current settings against. Leave empty to
 compare against Django's default settings.
 
+.. django-admin-option:: --output {hash,unified}
+
+.. versionadded:: 2.0
+
+Specifies the output format. Available values are ``hash`` and ``unified``.
+``hash`` is the default mode that displays the output that's described above.
+``unified`` displays the output similar to ``diff -u``. Default settings are
+prefixed with a minus sign, followed by the changed setting prefixed with a
+plus sign.
+
 ``dumpdata``
 ------------
 
@@ -416,6 +426,14 @@ originally generated.
 
 Specifies a single app to look for fixtures in rather than looking in all apps.
 
+.. django-admin-option:: --format FORMAT
+
+.. versionadded:: 2.0
+
+Specifies the :ref:`serialization format <serialization-formats>` (e.g.,
+``json`` or ``xml``) for fixtures :ref:`read from stdin
+<loading-fixtures-stdin>`.
+
 .. django-admin-option:: --exclude EXCLUDE, -e EXCLUDE
 
 .. versionadded:: 1.11
@@ -552,6 +570,27 @@ defined, name the fixture ``mydata.master.json`` or
 ``mydata.master.json.gz`` and the fixture will only be loaded when you
 specify you want to load data into the ``master`` database.
 
+.. _loading-fixtures-stdin:
+
+Loading fixtures from ``stdin``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. versionadded:: 2.0
+
+You can use a dash as the fixture name to load input from ``sys.stdin``. For
+example::
+
+    django-admin loaddata --format=json -
+
+When reading from ``stdin``, the :option:`--format <loaddata --format>` option
+is required to specify the :ref:`serialization format <serialization-formats>`
+of the input (e.g., ``json`` or ``xml``).
+
+Loading from ``stdin`` is useful with standard input and output redirections.
+For example::
+
+    django-admin dumpdata --format=json --database=test app_label.ModelName | django-admin loaddata --format=json --database=prod -
+
 ``makemessages``
 ----------------
 
@@ -646,6 +685,20 @@ Disables breaking long message lines into several lines in language files.
 Suppresses writing '``#: filename:line``’ comment lines in language files.
 Using this option makes it harder for technically skilled translators to
 understand each message's context.
+
+.. django-admin-option:: --add-location [{full,file,never}]
+
+.. versionadded:: 2.0
+
+Controls ``#: filename:line`` comment lines in language files. If the option
+is:
+
+* ``full`` (the default if not given): the lines include both file name and
+  line number.
+* ``file``: the line number is omitted.
+* ``never``: the lines are suppressed (same as :option:`--no-location`).
+
+Requires ``gettext`` 0.19 or newer.
 
 .. django-admin-option:: --keep-pot
 
@@ -823,9 +876,6 @@ If the :doc:`staticfiles</ref/contrib/staticfiles>` contrib app is enabled
 (default in new projects) the :djadmin:`runserver` command will be overridden
 with its own :ref:`runserver<staticfiles-runserver>` command.
 
-If :djadmin:`migrate` was not previously executed, the table that stores the
-history of migrations is created at first run of ``runserver``.
-
 Logging of each request and response of the server is sent to the
 :ref:`django-server-logger` logger.
 
@@ -941,7 +991,7 @@ Python interpreter, use ``python`` as the interface name, like so::
     django-admin shell -i python
 
 .. _IPython: https://ipython.org/
-.. _bpython: http://bpython-interpreter.org/
+.. _bpython: https://bpython-interpreter.org/
 
 .. django-admin-option:: --nostartup
 
@@ -1081,6 +1131,13 @@ behavior, as optimization is meant to be safe.
 .. django-admin-option:: --noinput, --no-input
 
 Suppresses all user prompts.
+
+.. django-admin-option:: --squashed-name SQUASHED_NAME
+
+.. versionadded:: 2.0
+
+Sets the name of the squashed migration. When omitted, the name is based on the
+first and last migration, with ``_squashed_`` in between.
 
 ``startapp``
 ------------
@@ -1560,7 +1617,7 @@ Example usage::
 
     django-admin migrate --pythonpath='/home/djangoprojects/myproject'
 
-.. _import search path: http://www.diveintopython.net/getting_to_know_python/everything_is_an_object.html
+.. _import search path: http://www.diveintopython3.net/your-first-python-program.html#importsearchpath
 
 .. django-admin-option:: --settings SETTINGS
 
@@ -1747,7 +1804,7 @@ To call a management command from code use ``call_command``.
 ``*args``
   a list of arguments accepted by the command. Arguments are passed to the
   argument parser, so you can use the same style as you would on the command
-  line. For example, ``call_command('flush', 'verbosity=0')``.
+  line. For example, ``call_command('flush', '--verbosity=0')``.
 
 ``**options``
   named options accepted on the command-line. Options are passed to the command

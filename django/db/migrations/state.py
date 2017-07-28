@@ -1,6 +1,6 @@
 import copy
 from collections import OrderedDict
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 
 from django.apps import AppConfig
 from django.apps.registry import Apps, apps as global_apps
@@ -224,7 +224,7 @@ class ProjectState:
         return cls(app_models)
 
     def __eq__(self, other):
-        if set(self.models.keys()) != set(other.models.keys()):
+        if set(self.models) != set(other.models):
             return False
         if set(self.real_apps) != set(other.real_apps):
             return False
@@ -342,11 +342,9 @@ class StateApps(Apps):
         self.clear_cache()
 
     def unregister_model(self, app_label, model_name):
-        try:
+        with suppress(KeyError):
             del self.all_models[app_label][model_name]
             del self.app_configs[app_label].models[model_name]
-        except KeyError:
-            pass
 
 
 class ModelState:
@@ -559,7 +557,7 @@ class ModelState:
         # First, make a Meta object
         meta_contents = {'app_label': self.app_label, "apps": apps}
         meta_contents.update(self.options)
-        meta = type("Meta", tuple(), meta_contents)
+        meta = type("Meta", (), meta_contents)
         # Then, work out our bases
         try:
             bases = tuple(

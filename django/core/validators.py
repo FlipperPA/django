@@ -1,6 +1,7 @@
 import ipaddress
 import os
 import re
+from contextlib import suppress
 from urllib.parse import urlsplit, urlunsplit
 
 from django.core.exceptions import ValidationError
@@ -51,10 +52,12 @@ class RegexValidator:
 
     def __call__(self, value):
         """
-        Validate that the input contains a match for the regular expression
-        if inverse_match is False, otherwise raise ValidationError.
+        Validate that the input contains (or does *not* contain, if
+        inverse_match is True) a match for the regular expression.
         """
-        if not (self.inverse_match is not bool(self.regex.search(str(value)))):
+        regex_matches = bool(self.regex.search(str(value)))
+        invalid_input = regex_matches if self.inverse_match else not regex_matches
+        if invalid_input:
             raise ValidationError(self.message, code=self.code)
 
     def __eq__(self, other):
@@ -198,10 +201,11 @@ class EmailValidator:
             # Try for possible IDN domain-part
             try:
                 domain_part = domain_part.encode('idna').decode('ascii')
-                if self.validate_domain_part(domain_part):
-                    return
             except UnicodeError:
                 pass
+            else:
+                if self.validate_domain_part(domain_part):
+                    return
             raise ValidationError(self.message, code=self.code)
 
     def validate_domain_part(self, domain_part):
@@ -211,11 +215,9 @@ class EmailValidator:
         literal_match = self.literal_regex.match(domain_part)
         if literal_match:
             ip_address = literal_match.group(1)
-            try:
+            with suppress(ValidationError):
                 validate_ipv46_address(ip_address)
                 return True
-            except ValidationError:
-                pass
         return False
 
     def __eq__(self, other):
@@ -459,6 +461,8 @@ class FileExtensionValidator:
     code = 'invalid_extension'
 
     def __init__(self, allowed_extensions=None, message=None, code=None):
+        if allowed_extensions is not None:
+            allowed_extensions = [allowed_extension.lower() for allowed_extension in allowed_extensions]
         self.allowed_extensions = allowed_extensions
         if message is not None:
             self.message = message
@@ -493,7 +497,7 @@ def get_available_image_extensions():
         return []
     else:
         Image.init()
-        return [ext.lower()[1:] for ext in Image.EXTENSION.keys()]
+        return [ext.lower()[1:] for ext in Image.EXTENSION]
 
 
 validate_image_file_extension = FileExtensionValidator(

@@ -290,7 +290,11 @@ class BaseModelAdmin(metaclass=forms.MediaDefiningClass):
         """
         Hook for specifying fields.
         """
-        return self.fields
+        if self.fields:
+            return self.fields
+        # _get_form_for_get_fields() is implemented in subclasses.
+        form = self._get_form_for_get_fields(request, obj)
+        return list(form.base_fields) + list(self.get_readonly_fields(request, obj))
 
     def get_fieldsets(self, request, obj=None):
         """
@@ -357,7 +361,7 @@ class BaseModelAdmin(metaclass=forms.MediaDefiningClass):
             # It is allowed to filter on values that would be found from local
             # model anyways. For example, if you filter on employee__department__id,
             # then the id value would be found already from employee__department_id.
-            if not prev_field or (prev_field.concrete and
+            if not prev_field or (prev_field.is_relation and
                                   field not in prev_field.get_path_info()[-1].target_fields):
                 relation_parts.append(part)
             if not getattr(field, 'get_path_info', None):
@@ -575,9 +579,9 @@ class ModelAdmin(BaseModelAdmin):
     def media(self):
         extra = '' if settings.DEBUG else '.min'
         js = [
-            'core.js',
             'vendor/jquery/jquery%s.js' % extra,
             'jquery.init.js',
+            'core.js',
             'admin/RelatedObjectLookups.js',
             'actions%s.js' % extra,
             'urlify.js',
@@ -598,11 +602,8 @@ class ModelAdmin(BaseModelAdmin):
             'delete': self.has_delete_permission(request),
         }
 
-    def get_fields(self, request, obj=None):
-        if self.fields:
-            return self.fields
-        form = self.get_form(request, obj, fields=None)
-        return list(form.base_fields) + list(self.get_readonly_fields(request, obj))
+    def _get_form_for_get_fields(self, request, obj):
+        return self.get_form(request, obj, fields=None)
 
     def get_form(self, request, obj=None, **kwargs):
         """
@@ -1044,11 +1045,10 @@ class ModelAdmin(BaseModelAdmin):
         Determine the HttpResponse for the add_view stage.
         """
         opts = obj._meta
-        pk_value = obj._get_pk_val()
         preserved_filters = self.get_preserved_filters(request)
         obj_url = reverse(
             'admin:%s_%s_change' % (opts.app_label, opts.model_name),
-            args=(quote(pk_value),),
+            args=(quote(obj.pk),),
             current_app=self.admin_site.name,
         )
         # Add a link to the object's change form if the user can edit the obj.
@@ -1145,7 +1145,6 @@ class ModelAdmin(BaseModelAdmin):
             })
 
         opts = self.model._meta
-        pk_value = obj._get_pk_val()
         preserved_filters = self.get_preserved_filters(request)
 
         msg_dict = {
@@ -1170,7 +1169,7 @@ class ModelAdmin(BaseModelAdmin):
             self.message_user(request, msg, messages.SUCCESS)
             redirect_url = reverse('admin:%s_%s_change' %
                                    (opts.app_label, opts.model_name),
-                                   args=(pk_value,),
+                                   args=(obj.pk,),
                                    current_app=self.admin_site.name)
             redirect_url = add_preserved_filters({'preserved_filters': preserved_filters, 'opts': opts}, redirect_url)
             return HttpResponseRedirect(redirect_url)
@@ -1443,6 +1442,10 @@ class ModelAdmin(BaseModelAdmin):
                 new_object = form.instance
             formsets, inline_instances = self._create_formsets(request, new_object, change=not add)
             if all_valid(formsets) and form_validated:
+                if not add:
+                    # Evalute querysets in form.initial so that changes to
+                    # ManyToManyFields are reflected in this change's LogEntry.
+                    form.has_changed()
                 self.save_model(request, new_object, form, not add)
                 self.save_related(request, form, formsets, not add)
                 change_message = self.construct_change_message(request, form, formsets, add)
@@ -1546,7 +1549,7 @@ class ModelAdmin(BaseModelAdmin):
             # and the 'invalid=1' parameter was already in the query string,
             # something is screwed up with the database, so display an error
             # page.
-            if ERROR_FLAG in request.GET.keys():
+            if ERROR_FLAG in request.GET:
                 return SimpleTemplateResponse('admin/invalid_setup.html', {
                     'title': _('Database error'),
                 })
@@ -1944,11 +1947,8 @@ class InlineModelAdmin(BaseModelAdmin):
 
         return inlineformset_factory(self.parent_model, self.model, **defaults)
 
-    def get_fields(self, request, obj=None):
-        if self.fields:
-            return self.fields
-        form = self.get_formset(request, obj, fields=None).form
-        return list(form.base_fields) + list(self.get_readonly_fields(request, obj))
+    def _get_form_for_get_fields(self, request, obj=None):
+        return self.get_formset(request, obj, fields=None).form
 
     def get_queryset(self, request):
         queryset = super().get_queryset(request)

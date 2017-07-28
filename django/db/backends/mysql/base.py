@@ -84,25 +84,15 @@ class CursorWrapper:
             raise
 
     def __getattr__(self, attr):
-        if attr in self.__dict__:
-            return self.__dict__[attr]
-        else:
-            return getattr(self.cursor, attr)
+        return getattr(self.cursor, attr)
 
     def __iter__(self):
         return iter(self.cursor)
 
-    def __enter__(self):
-        return self
-
-    def __exit__(self, type, value, traceback):
-        # Close instead of passing through to avoid backend-specific behavior
-        # (#17671).
-        self.close()
-
 
 class DatabaseWrapper(BaseDatabaseWrapper):
     vendor = 'mysql'
+    display_name = 'MySQL'
     # This dictionary maps Field objects to their associated MySQL column
     # types, as strings. Column-type strings can contain format strings; they'll
     # be interpolated against the values of Field.__dict__ before being output.
@@ -141,6 +131,14 @@ class DatabaseWrapper(BaseDatabaseWrapper):
             return dict(self._data_types, DateTimeField='datetime(6)', TimeField='time(6)')
         else:
             return self._data_types
+
+    # For these columns, MySQL doesn't:
+    # - accept default values and implicitly treats these columns as nullable
+    # - support a database index
+    _limited_data_types = (
+        'tinyblob', 'blob', 'mediumblob', 'longblob', 'tinytext', 'text',
+        'mediumtext', 'longtext', 'json',
+    )
 
     operators = {
         'exact': '= %s',

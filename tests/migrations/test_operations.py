@@ -1,5 +1,6 @@
 import unittest
 
+from django.core.exceptions import FieldDoesNotExist
 from django.db import connection, migrations, models, transaction
 from django.db.migrations.migration import Migration
 from django.db.migrations.operations import CreateModel
@@ -207,7 +208,7 @@ class OperationTests(OperationTestBase):
         definition = operation.deconstruct()
         self.assertEqual(definition[0], "CreateModel")
         self.assertEqual(definition[1], [])
-        self.assertEqual(sorted(definition[2].keys()), ["fields", "name"])
+        self.assertEqual(sorted(definition[2]), ["fields", "name"])
         # And default manager not in set
         operation = migrations.CreateModel("Foo", fields=[], managers=[("objects", models.Manager())])
         definition = operation.deconstruct()
@@ -430,7 +431,7 @@ class OperationTests(OperationTestBase):
         definition = operation.deconstruct()
         self.assertEqual(definition[0], "CreateModel")
         self.assertEqual(definition[1], [])
-        self.assertEqual(sorted(definition[2].keys()), ["bases", "fields", "name", "options"])
+        self.assertEqual(sorted(definition[2]), ["bases", "fields", "name", "options"])
 
     def test_create_unmanaged_model(self):
         """
@@ -1105,7 +1106,7 @@ class OperationTests(OperationTestBase):
         ])
         self.assertTableExists("test_rmflmmwt_ponystables")
 
-        operations = [migrations.RemoveField("Pony", "stables")]
+        operations = [migrations.RemoveField("Pony", "stables"), migrations.DeleteModel("PonyStables")]
         self.apply_operations("test_rmflmmwt", project_state, operations=operations)
 
     def test_remove_field(self):
@@ -1367,6 +1368,12 @@ class OperationTests(OperationTestBase):
         self.assertEqual(definition[0], "RenameField")
         self.assertEqual(definition[1], [])
         self.assertEqual(definition[2], {'model_name': "Pony", 'old_name': "pink", 'new_name': "blue"})
+
+    def test_rename_missing_field(self):
+        state = ProjectState()
+        state.add_model(ModelState('app', 'model', []))
+        with self.assertRaisesMessage(FieldDoesNotExist, "app.model has no field named 'field'"):
+            migrations.RenameField('model', 'field', 'new_field').state_forwards('app', state)
 
     def test_alter_unique_together(self):
         """

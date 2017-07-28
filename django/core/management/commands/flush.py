@@ -1,10 +1,11 @@
+from contextlib import suppress
 from importlib import import_module
 
 from django.apps import apps
 from django.core.management.base import BaseCommand, CommandError
 from django.core.management.color import no_style
 from django.core.management.sql import emit_post_migrate_signal, sql_flush
-from django.db import DEFAULT_DB_ALIAS, connections, transaction
+from django.db import DEFAULT_DB_ALIAS, connections
 
 
 class Command(BaseCommand):
@@ -12,6 +13,7 @@ class Command(BaseCommand):
         'Removes ALL DATA from the database, including data added during '
         'migrations. Does not achieve a "fresh install" state.'
     )
+    stealth_options = ('reset_sequences', 'allow_cascade', 'inhibit_post_migrate')
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -38,10 +40,8 @@ class Command(BaseCommand):
         # Import the 'management' module within each installed app, to register
         # dispatcher events.
         for app_config in apps.get_app_configs():
-            try:
+            with suppress(ImportError):
                 import_module('.management', app_config.name)
-            except ImportError:
-                pass
 
         sql_list = sql_flush(self.style, connection, only_django=True,
                              reset_sequences=reset_sequences,
@@ -59,11 +59,7 @@ Are you sure you want to do this?
 
         if confirm == 'yes':
             try:
-                with transaction.atomic(using=database,
-                                        savepoint=connection.features.can_rollback_ddl):
-                    with connection.cursor() as cursor:
-                        for sql in sql_list:
-                            cursor.execute(sql)
+                connection.ops.execute_sql_flush(database, sql_list)
             except Exception as exc:
                 raise CommandError(
                     "Database %s couldn't be flushed. Possible reasons:\n"

@@ -641,6 +641,21 @@ PostgreSQL), it is an error to set this option.
 
 When :setting:`USE_TZ` is ``False``, it is an error to set this option.
 
+.. setting:: DATABASE-DISABLE_SERVER_SIDE_CURSORS
+
+``DISABLE_SERVER_SIDE_CURSORS``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. versionadded:: 1.11.1
+
+Default: ``False``
+
+Set this to ``True`` if you want to disable the use of server-side cursors with
+:meth:`.QuerySet.iterator`. :ref:`transaction-pooling-server-side-cursors`
+describes the use case.
+
+This is a PostgreSQL-specific setting.
+
 .. setting:: USER
 
 ``USER``
@@ -895,6 +910,58 @@ Default: ``'500M'``
 This is an Oracle-specific setting.
 
 The maximum size that the DATAFILE_TMP is allowed to grow to.
+
+.. setting:: DATAFILE_SIZE
+
+``DATAFILE_SIZE``
+^^^^^^^^^^^^^^^^^
+
+.. versionadded:: 2.0
+
+Default: ``'50M'``
+
+This is an Oracle-specific setting.
+
+The initial size of the DATAFILE.
+
+.. setting:: DATAFILE_TMP_SIZE
+
+``DATAFILE_TMP_SIZE``
+^^^^^^^^^^^^^^^^^^^^^
+
+.. versionadded:: 2.0
+
+Default: ``'50M'``
+
+This is an Oracle-specific setting.
+
+The initial size of the DATAFILE_TMP.
+
+.. setting:: DATAFILE_EXTSIZE
+
+``DATAFILE_EXTSIZE``
+^^^^^^^^^^^^^^^^^^^^
+
+.. versionadded:: 2.0
+
+Default: ``'25M'``
+
+This is an Oracle-specific setting.
+
+The amount by which the DATAFILE is extended when more space is required.
+
+.. setting:: DATAFILE_TMP_EXTSIZE
+
+``DATAFILE_TMP_EXTSIZE``
+^^^^^^^^^^^^^^^^^^^^^^^^
+
+.. versionadded:: 2.0
+
+Default: ``'25M'``
+
+This is an Oracle-specific setting.
+
+The amount by which the DATAFILE_TMP is extended when more space is required.
 
 .. setting:: DATA_UPLOAD_MAX_MEMORY_SIZE
 
@@ -1891,7 +1958,7 @@ Example: ``"http://media.example.com/"``
 ``MIDDLEWARE``
 --------------
 
-Default:: ``None``
+Default: ``None``
 
 A list of middleware to use. See :doc:`/topics/http/middleware`.
 
@@ -2107,11 +2174,6 @@ If ``True``, the :class:`~django.middleware.security.SecurityMiddleware` adds
 the ``preload`` directive to the :ref:`http-strict-transport-security`
 header. It has no effect unless :setting:`SECURE_HSTS_SECONDS` is set to a
 non-zero value.
-
-.. warning::
-    Setting this incorrectly can irreversibly (for at least several months,
-    depending on browser releases) break your site. Read the
-    :ref:`http-strict-transport-security` documentation first.
 
 .. setting:: SECURE_HSTS_SECONDS
 

@@ -12,12 +12,6 @@ class BrinIndexTests(PostgreSQLTestCase):
     def test_suffix(self):
         self.assertEqual(BrinIndex.suffix, 'brin')
 
-    def test_repr(self):
-        index = BrinIndex(fields=['title'], pages_per_range=4)
-        another_index = BrinIndex(fields=['title'])
-        self.assertEqual(repr(index), "<BrinIndex: fields='title', pages_per_range=4>")
-        self.assertEqual(repr(another_index), "<BrinIndex: fields='title'>")
-
     def test_not_eq(self):
         index = BrinIndex(fields=['title'])
         index_with_page_range = BrinIndex(fields=['title'], pages_per_range=16)
@@ -58,10 +52,6 @@ class GinIndexTests(PostgreSQLTestCase):
     def test_suffix(self):
         self.assertEqual(GinIndex.suffix, 'gin')
 
-    def test_repr(self):
-        index = GinIndex(fields=['title'])
-        self.assertEqual(repr(index), "<GinIndex: fields='title'>")
-
     def test_eq(self):
         index = GinIndex(fields=['title'])
         same_index = GinIndex(fields=['title'])
@@ -75,11 +65,24 @@ class GinIndexTests(PostgreSQLTestCase):
         self.assertEqual(index.name, 'postgres_te_field_def2f8_gin')
 
     def test_deconstruction(self):
-        index = GinIndex(fields=['title'], name='test_title_gin')
+        index = GinIndex(
+            fields=['title'],
+            name='test_title_gin',
+            fastupdate=True,
+            gin_pending_list_limit=128,
+        )
         path, args, kwargs = index.deconstruct()
         self.assertEqual(path, 'django.contrib.postgres.indexes.GinIndex')
         self.assertEqual(args, ())
-        self.assertEqual(kwargs, {'fields': ['title'], 'name': 'test_title_gin'})
+        self.assertEqual(
+            kwargs,
+            {
+                'fields': ['title'],
+                'name': 'test_title_gin',
+                'fastupdate': True,
+                'gin_pending_list_limit': 128,
+            }
+        )
 
 
 class SchemaTests(PostgreSQLTestCase):
@@ -103,6 +106,31 @@ class SchemaTests(PostgreSQLTestCase):
         # Check gin index was added
         self.assertEqual(constraints[index_name]['type'], GinIndex.suffix)
         # Drop the index
+        with connection.schema_editor() as editor:
+            editor.remove_index(IntegerArrayModel, index)
+        self.assertNotIn(index_name, self.get_constraints(IntegerArrayModel._meta.db_table))
+
+    def test_gin_fastupdate(self):
+        index_name = 'integer_array_gin_fastupdate'
+        index = GinIndex(fields=['field'], name=index_name, fastupdate=False)
+        with connection.schema_editor() as editor:
+            editor.add_index(IntegerArrayModel, index)
+        constraints = self.get_constraints(IntegerArrayModel._meta.db_table)
+        self.assertEqual(constraints[index_name]['type'], 'gin')
+        self.assertEqual(constraints[index_name]['options'], ['fastupdate=off'])
+        with connection.schema_editor() as editor:
+            editor.remove_index(IntegerArrayModel, index)
+        self.assertNotIn(index_name, self.get_constraints(IntegerArrayModel._meta.db_table))
+
+    @skipUnlessDBFeature('has_gin_pending_list_limit')
+    def test_gin_parameters(self):
+        index_name = 'integer_array_gin_params'
+        index = GinIndex(fields=['field'], name=index_name, fastupdate=True, gin_pending_list_limit=64)
+        with connection.schema_editor() as editor:
+            editor.add_index(IntegerArrayModel, index)
+        constraints = self.get_constraints(IntegerArrayModel._meta.db_table)
+        self.assertEqual(constraints[index_name]['type'], 'gin')
+        self.assertEqual(constraints[index_name]['options'], ['gin_pending_list_limit=64', 'fastupdate=on'])
         with connection.schema_editor() as editor:
             editor.remove_index(IntegerArrayModel, index)
         self.assertNotIn(index_name, self.get_constraints(IntegerArrayModel._meta.db_table))

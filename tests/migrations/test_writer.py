@@ -40,7 +40,7 @@ class Money(decimal.Decimal):
         )
 
 
-class TestModel1(object):
+class TestModel1:
     def upload_to(self):
         return '/somewhere/dynamic/'
     thing = models.FileField(upload_to=upload_to)
@@ -504,6 +504,12 @@ class WriterTests(SimpleTestCase):
     def test_serialize_frozensets(self):
         self.assertSerializedEqual(frozenset())
         self.assertSerializedEqual(frozenset("let it go"))
+
+    def test_serialize_set(self):
+        self.assertSerializedEqual(set())
+        self.assertSerializedResultEqual(set(), ('set()', set()))
+        self.assertSerializedEqual({'a'})
+        self.assertSerializedResultEqual({'a'}, ("{'a'}", set()))
 
     def test_serialize_timedelta(self):
         self.assertSerializedEqual(datetime.timedelta())

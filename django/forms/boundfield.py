@@ -6,7 +6,7 @@ from django.forms.widgets import Textarea, TextInput
 from django.utils.deprecation import RemovedInDjango21Warning
 from django.utils.functional import cached_property
 from django.utils.html import conditional_escape, format_html, html_safe
-from django.utils.inspect import func_supports_parameter
+from django.utils.inspect import func_accepts_kwargs, func_supports_parameter
 from django.utils.safestring import mark_safe
 from django.utils.translation import gettext_lazy as _
 
@@ -47,10 +47,10 @@ class BoundField:
         id_ = self.field.widget.attrs.get('id') or self.auto_id
         attrs = {'id': id_} if id_ else {}
         attrs = self.build_widget_attrs(attrs)
-        return list(
+        return [
             BoundWidget(self.field.widget, widget, self.form.renderer)
             for widget in self.field.widget.subwidgets(self.html_name, self.value(), attrs=attrs)
-        )
+        ]
 
     def __bool__(self):
         # BoundField evaluates to True even if it doesn't have subwidgets.
@@ -103,7 +103,7 @@ class BoundField:
             name = self.html_initial_name
 
         kwargs = {}
-        if func_supports_parameter(widget.render, 'renderer'):
+        if func_supports_parameter(widget.render, 'renderer') or func_accepts_kwargs(widget.render):
             kwargs['renderer'] = self.form.renderer
         else:
             warnings.warn(

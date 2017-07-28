@@ -52,8 +52,9 @@ class DatabaseSchemaEditor(BaseDatabaseSchemaEditor):
                 return self._create_index_sql(model, [field], suffix='_like', sql=self.sql_create_text_index)
         return None
 
-    def _alter_column_type_sql(self, table, old_field, new_field, new_type):
+    def _alter_column_type_sql(self, model, old_field, new_field, new_type):
         """Make ALTER TYPE with SERIAL make sense."""
+        table = model._meta.db_table
         if new_type.lower() in ("serial", "bigserial"):
             column = new_field.column
             sequence_name = "%s_%s_seq" % (table, column)
@@ -100,10 +101,19 @@ class DatabaseSchemaEditor(BaseDatabaseSchemaEditor):
                 ],
             )
         else:
-            return super()._alter_column_type_sql(table, old_field, new_field, new_type)
+            return super()._alter_column_type_sql(model, old_field, new_field, new_type)
 
     def _alter_field(self, model, old_field, new_field, old_type, new_type,
                      old_db_params, new_db_params, strict=False):
+        # Drop indexes on varchar/text columns that are changing to a different
+        # type.
+        if (old_field.db_index or old_field.unique) and (
+            (old_type.startswith('varchar') and not new_type.startswith('varchar')) or
+            (old_type.startswith('text') and not new_type.startswith('text'))
+        ):
+            index_name = self._create_index_name(model._meta.db_table, [old_field.column], suffix='_like')
+            self.execute(self._delete_constraint_sql(self.sql_delete_index, model, index_name))
+
         super()._alter_field(
             model, old_field, new_field, old_type, new_type, old_db_params,
             new_db_params, strict,
@@ -117,5 +127,5 @@ class DatabaseSchemaEditor(BaseDatabaseSchemaEditor):
 
         # Removed an index? Drop any PostgreSQL-specific indexes.
         if old_field.unique and not (new_field.db_index or new_field.unique):
-            index_to_remove = self._create_index_name(model, [old_field.column], suffix='_like')
+            index_to_remove = self._create_index_name(model._meta.db_table, [old_field.column], suffix='_like')
             self.execute(self._delete_constraint_sql(self.sql_delete_index, model, index_to_remove))

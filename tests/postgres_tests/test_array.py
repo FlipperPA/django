@@ -2,6 +2,7 @@ import decimal
 import json
 import unittest
 import uuid
+from contextlib import suppress
 
 from django import forms
 from django.core import exceptions, serializers, validators
@@ -19,13 +20,11 @@ from .models import (
     PostgreSQLModel, Tag,
 )
 
-try:
+with suppress(ImportError):
     from django.contrib.postgres.fields import ArrayField
     from django.contrib.postgres.forms import (
         SimpleArrayField, SplitArrayField, SplitArrayWidget,
     )
-except ImportError:
-    pass
 
 
 class TestSaveLoad(PostgreSQLTestCase):
@@ -685,6 +684,11 @@ class TestSimpleFormField(PostgreSQLTestCase):
         form_field = model_field.formfield()
         self.assertIsInstance(form_field, SimpleArrayField)
         self.assertEqual(form_field.max_length, 4)
+
+    def test_model_field_choices(self):
+        model_field = ArrayField(models.IntegerField(choices=((1, 'A'), (2, 'B'))))
+        form_field = model_field.formfield()
+        self.assertEqual(form_field.clean('1,2'), [1, 2])
 
     def test_already_converted_value(self):
         field = SimpleArrayField(forms.CharField())

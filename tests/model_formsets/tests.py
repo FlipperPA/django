@@ -1463,7 +1463,7 @@ class ModelFormsetTest(TestCase):
         # a formset for a Model that has a custom primary key that still needs to be
         # added to the formset automatically
         FormSet = modelformset_factory(ClassyMexicanRestaurant, fields=["tacos_are_yummy"])
-        self.assertEqual(sorted(FormSet().forms[0].fields.keys()), ['tacos_are_yummy', 'the_restaurant'])
+        self.assertEqual(sorted(FormSet().forms[0].fields), ['tacos_are_yummy', 'the_restaurant'])
 
     def test_model_formset_with_initial_model_instance(self):
         # has_changed should compare model instance and primary key
@@ -1654,6 +1654,65 @@ class ModelFormsetTest(TestCase):
         # The name of other_author shouldn't be changed and new models aren't
         # created.
         self.assertQuerysetEqual(Author.objects.all(), ['<Author: Charles>', '<Author: Walt>'])
+
+    def test_validation_without_id(self):
+        AuthorFormSet = modelformset_factory(Author, fields='__all__')
+        data = {
+            'form-TOTAL_FORMS': '1',
+            'form-INITIAL_FORMS': '1',
+            'form-MAX_NUM_FORMS': '',
+            'form-0-name': 'Charles',
+        }
+        formset = AuthorFormSet(data)
+        self.assertEqual(
+            formset.errors,
+            [{'id': ['This field is required.']}],
+        )
+
+    def test_validation_with_child_model_without_id(self):
+        BetterAuthorFormSet = modelformset_factory(BetterAuthor, fields='__all__')
+        data = {
+            'form-TOTAL_FORMS': '1',
+            'form-INITIAL_FORMS': '1',
+            'form-MAX_NUM_FORMS': '',
+            'form-0-name': 'Charles',
+            'form-0-write_speed': '10',
+        }
+        formset = BetterAuthorFormSet(data)
+        self.assertEqual(
+            formset.errors,
+            [{'author_ptr': ['This field is required.']}],
+        )
+
+    def test_validation_with_invalid_id(self):
+        AuthorFormSet = modelformset_factory(Author, fields='__all__')
+        data = {
+            'form-TOTAL_FORMS': '1',
+            'form-INITIAL_FORMS': '1',
+            'form-MAX_NUM_FORMS': '',
+            'form-0-id': 'abc',
+            'form-0-name': 'Charles',
+        }
+        formset = AuthorFormSet(data)
+        self.assertEqual(
+            formset.errors,
+            [{'id': ['Select a valid choice. That choice is not one of the available choices.']}],
+        )
+
+    def test_validation_with_nonexistent_id(self):
+        AuthorFormSet = modelformset_factory(Author, fields='__all__')
+        data = {
+            'form-TOTAL_FORMS': '1',
+            'form-INITIAL_FORMS': '1',
+            'form-MAX_NUM_FORMS': '',
+            'form-0-id': '12345',
+            'form-0-name': 'Charles',
+        }
+        formset = AuthorFormSet(data)
+        self.assertEqual(
+            formset.errors,
+            [{'id': ['Select a valid choice. That choice is not one of the available choices.']}],
+        )
 
 
 class TestModelFormsetOverridesTroughFormMeta(TestCase):

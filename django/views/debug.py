@@ -2,6 +2,7 @@ import functools
 import re
 import sys
 import types
+from contextlib import suppress
 from pathlib import Path
 
 from django.conf import settings
@@ -87,7 +88,7 @@ def technical_500_response(request, exc_type, exc_value, tb, status_code=500):
     reporter = ExceptionReporter(request, exc_type, exc_value, tb)
     if request.is_ajax():
         text = reporter.get_traceback_text()
-        return HttpResponse(text, status=status_code, content_type='text/plain')
+        return HttpResponse(text, status=status_code, content_type='text/plain; charset=utf-8')
     else:
         html = reporter.get_traceback_html()
         return HttpResponse(html, status=status_code, content_type='text/html')
@@ -345,18 +346,14 @@ class ExceptionReporter:
         """
         source = None
         if loader is not None and hasattr(loader, "get_source"):
-            try:
+            with suppress(ImportError):
                 source = loader.get_source(module_name)
-            except ImportError:
-                pass
             if source is not None:
                 source = source.splitlines()
         if source is None:
-            try:
+            with suppress(OSError, IOError):
                 with open(filename, 'rb') as fp:
                     source = fp.read().splitlines()
-            except (OSError, IOError):
-                pass
         if source is None:
             return None, [], None, []
 

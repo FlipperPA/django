@@ -15,6 +15,16 @@ class DatabaseOperations(BaseDatabaseOperations):
         PositiveSmallIntegerField=(0, 65535),
         PositiveIntegerField=(0, 4294967295),
     )
+    cast_data_types = {
+        'CharField': 'char(%(max_length)s)',
+        'IntegerField': 'signed integer',
+        'BigIntegerField': 'signed integer',
+        'SmallIntegerField': 'signed integer',
+        'FloatField': 'signed',
+        'PositiveIntegerField': 'unsigned integer',
+        'PositiveSmallIntegerField': 'unsigned integer',
+    }
+    cast_char_field_without_max_length = 'char'
 
     def date_extract_sql(self, lookup_type, field_name):
         # http://dev.mysql.com/doc/mysql/en/date-and-time-functions.html
@@ -39,6 +49,10 @@ class DatabaseOperations(BaseDatabaseOperations):
         if lookup_type in fields:
             format_str = fields[lookup_type]
             return "CAST(DATE_FORMAT(%s, '%s') AS DATE)" % (field_name, format_str)
+        elif lookup_type == 'quarter':
+            return "MAKEDATE(YEAR(%s), 1) + INTERVAL QUARTER(%s) QUARTER - INTERVAL 1 QUARTER" % (
+                field_name, field_name
+            )
         else:
             return "DATE(%s)" % (field_name)
 
@@ -64,6 +78,12 @@ class DatabaseOperations(BaseDatabaseOperations):
         fields = ['year', 'month', 'day', 'hour', 'minute', 'second']
         format = ('%%Y-', '%%m', '-%%d', ' %%H:', '%%i', ':%%s')  # Use double percents to escape.
         format_def = ('0000-', '01', '-01', ' 00:', '00', ':00')
+        if lookup_type == 'quarter':
+            return (
+                "CAST(DATE_FORMAT(MAKEDATE(YEAR({field_name}), 1) + "
+                "INTERVAL QUARTER({field_name}) QUARTER - " +
+                "INTERVAL 1 QUARTER, '%%Y-%%m-01 00:00:00') AS DATETIME)"
+            ).format(field_name=field_name)
         try:
             i = fields.index(lookup_type) + 1
         except ValueError:
@@ -86,7 +106,7 @@ class DatabaseOperations(BaseDatabaseOperations):
             return "TIME(%s)" % (field_name)
 
     def date_interval_sql(self, timedelta):
-        return "INTERVAL '%06f' SECOND_MICROSECOND" % (timedelta.total_seconds()), []
+        return "INTERVAL '%06f' SECOND_MICROSECOND" % timedelta.total_seconds()
 
     def format_for_duration_arithmetic(self, sql):
         if self.connection.features.supports_microsecond_precision:
@@ -211,23 +231,23 @@ class DatabaseOperations(BaseDatabaseOperations):
             converters.append(self.convert_uuidfield_value)
         return converters
 
-    def convert_textfield_value(self, value, expression, connection, context):
+    def convert_textfield_value(self, value, expression, connection):
         if value is not None:
             value = force_text(value)
         return value
 
-    def convert_booleanfield_value(self, value, expression, connection, context):
+    def convert_booleanfield_value(self, value, expression, connection):
         if value in (0, 1):
             value = bool(value)
         return value
 
-    def convert_datetimefield_value(self, value, expression, connection, context):
+    def convert_datetimefield_value(self, value, expression, connection):
         if value is not None:
             if settings.USE_TZ:
                 value = timezone.make_aware(value, self.connection.timezone)
         return value
 
-    def convert_uuidfield_value(self, value, expression, connection, context):
+    def convert_uuidfield_value(self, value, expression, connection):
         if value is not None:
             value = uuid.UUID(value)
         return value

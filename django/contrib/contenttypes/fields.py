@@ -1,4 +1,5 @@
 from collections import defaultdict
+from contextlib import suppress
 
 from django.contrib.contenttypes.models import ContentType
 from django.core import checks
@@ -203,7 +204,7 @@ class GenericForeignKey:
                         model)
 
         return (ret_val,
-                lambda obj: (obj._get_pk_val(), obj.__class__),
+                lambda obj: (obj.pk, obj.__class__),
                 gfk_key,
                 True,
                 self.name)
@@ -229,7 +230,7 @@ class GenericForeignKey:
             rel_obj = None
         else:
             if rel_obj and (ct_id != self.get_content_type(obj=rel_obj, using=instance._state.db).id or
-                            rel_obj._meta.pk.to_python(pk_val) != rel_obj._get_pk_val()):
+                            rel_obj._meta.pk.to_python(pk_val) != rel_obj.pk):
                 rel_obj = None
 
         if rel_obj is not None:
@@ -237,10 +238,8 @@ class GenericForeignKey:
 
         if ct_id is not None:
             ct = self.get_content_type(id=ct_id, using=instance._state.db)
-            try:
+            with suppress(ObjectDoesNotExist):
                 rel_obj = ct.get_object_for_this_type(pk=pk_val)
-            except ObjectDoesNotExist:
-                pass
         setattr(instance, self.cache_attr, rel_obj)
         return rel_obj
 
@@ -249,7 +248,7 @@ class GenericForeignKey:
         fk = None
         if value is not None:
             ct = self.get_content_type(obj=value)
-            fk = value._get_pk_val()
+            fk = value.pk
 
         setattr(instance, self.ct_field, ct)
         setattr(instance, self.fk_field, fk)
@@ -363,7 +362,7 @@ class GenericRelation(ForeignObject):
         # generating a join to the parent model, then generating joins to the
         # child models.
         path = []
-        opts = self.remote_field.model._meta
+        opts = self.remote_field.model._meta.concrete_model._meta
         parent_opts = opts.get_field(self.object_id_field_name).model._meta
         target = parent_opts.pk
         path.append(PathInfo(self.model._meta, parent_opts, (target,), self.remote_field, True, False))
@@ -397,7 +396,7 @@ class GenericRelation(ForeignObject):
 
     def value_to_string(self, obj):
         qs = getattr(obj, self.name).all()
-        return str([instance._get_pk_val() for instance in qs])
+        return str([instance.pk for instance in qs])
 
     def contribute_to_class(self, cls, name, **kwargs):
         kwargs['private_only'] = True
@@ -490,7 +489,7 @@ def create_generic_related_manager(superclass, rel):
             self.content_type_field_name = rel.field.content_type_field_name
             self.object_id_field_name = rel.field.object_id_field_name
             self.prefetch_cache_name = rel.field.attname
-            self.pk_val = instance._get_pk_val()
+            self.pk_val = instance.pk
 
             self.core_filters = {
                 '%s__pk' % self.content_type_field_name: content_type.id,
@@ -529,7 +528,7 @@ def create_generic_related_manager(superclass, rel):
 
             query = {
                 '%s__pk' % self.content_type_field_name: self.content_type.id,
-                '%s__in' % self.object_id_field_name: set(obj._get_pk_val() for obj in instances)
+                '%s__in' % self.object_id_field_name: {obj.pk for obj in instances}
             }
 
             # We (possibly) need to convert object IDs to the type of the
@@ -537,7 +536,7 @@ def create_generic_related_manager(superclass, rel):
             object_id_converter = instances[0]._meta.pk.to_python
             return (queryset.filter(**query),
                     lambda relobj: object_id_converter(getattr(relobj, self.object_id_field_name)),
-                    lambda obj: obj._get_pk_val(),
+                    lambda obj: obj.pk,
                     False,
                     self.prefetch_cache_name)
 

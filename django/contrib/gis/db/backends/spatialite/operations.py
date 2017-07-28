@@ -3,10 +3,9 @@ SQL functions reference lists:
 https://web.archive.org/web/20130407175746/https://www.gaia-gis.it/gaia-sins/spatialite-sql-4.0.0.html
 https://www.gaia-gis.it/gaia-sins/spatialite-sql-4.2.1.html
 """
-import re
-
-from django.contrib.gis.db.backends.base.operations import \
-    BaseSpatialOperations
+from django.contrib.gis.db.backends.base.operations import (
+    BaseSpatialOperations,
+)
 from django.contrib.gis.db.backends.spatialite.adapter import SpatiaLiteAdapter
 from django.contrib.gis.db.backends.utils import SpatialOperator
 from django.contrib.gis.db.models import aggregates
@@ -15,26 +14,12 @@ from django.contrib.gis.measure import Distance
 from django.core.exceptions import ImproperlyConfigured
 from django.db.backends.sqlite3.operations import DatabaseOperations
 from django.utils.functional import cached_property
-
-
-class SpatiaLiteDistanceOperator(SpatialOperator):
-    def as_sql(self, connection, lookup, template_params, sql_params):
-        if lookup.lhs.output_field.geodetic(connection):
-            # SpatiaLite returns NULL instead of zero on geodetic coordinates
-            sql_template = 'COALESCE(%(func)s(%(lhs)s, %(rhs)s, %%s), 0) %(op)s %(value)s'
-            template_params.update({
-                'op': self.op,
-                'func': connection.ops.spatial_function_name('Distance'),
-            })
-            sql_params.insert(1, len(lookup.rhs) == 3 and lookup.rhs[-1] == 'spheroid')
-            return sql_template % template_params, sql_params
-        return super().as_sql(connection, lookup, template_params, sql_params)
+from django.utils.version import get_version_tuple
 
 
 class SpatiaLiteOperations(BaseSpatialOperations, DatabaseOperations):
     name = 'spatialite'
     spatialite = True
-    version_regex = re.compile(r'^(?P<major>\d)\.(?P<minor1>\d)\.(?P<minor2>\d+)')
 
     Adapter = SpatiaLiteAdapter
 
@@ -44,7 +29,6 @@ class SpatiaLiteOperations(BaseSpatialOperations, DatabaseOperations):
     unionagg = 'GUnion'
 
     from_text = 'GeomFromText'
-    from_wkb = 'GeomFromWKB'
     select = 'AsText(%s)'
 
     gis_operators = {
@@ -69,10 +53,6 @@ class SpatiaLiteOperations(BaseSpatialOperations, DatabaseOperations):
         'exact': SpatialOperator(func='Equals'),
         # Distance predicates
         'dwithin': SpatialOperator(func='PtDistWithin'),
-        'distance_gt': SpatiaLiteDistanceOperator(func='Distance', op='>'),
-        'distance_gte': SpatiaLiteDistanceOperator(func='Distance', op='>='),
-        'distance_lt': SpatiaLiteDistanceOperator(func='Distance', op='<'),
-        'distance_lte': SpatiaLiteDistanceOperator(func='Distance', op='<='),
     }
 
     disallowed_aggregates = (aggregates.Extent3D,)
@@ -188,16 +168,7 @@ class SpatiaLiteOperations(BaseSpatialOperations, DatabaseOperations):
         minor, subminor).
         """
         version = self.spatialite_version()
-
-        m = self.version_regex.match(version)
-        if m:
-            major = int(m.group('major'))
-            minor1 = int(m.group('minor1'))
-            minor2 = int(m.group('minor2'))
-        else:
-            raise Exception('Could not parse SpatiaLite version string: %s' % version)
-
-        return (version, major, minor1, minor2)
+        return (version,) + get_version_tuple(version)
 
     def spatial_aggregate_name(self, agg_name):
         """

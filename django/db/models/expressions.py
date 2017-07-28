@@ -1,5 +1,6 @@
 import copy
 import datetime
+from contextlib import suppress
 
 from django.core.exceptions import EmptyResultSet, FieldError
 from django.db.backends import utils as backend_utils
@@ -124,11 +125,11 @@ class BaseExpression:
 
     # aggregate specific fields
     is_summary = False
-    _output_field = None
+    _output_field_resolved_to_none = False
 
     def __init__(self, output_field=None):
         if output_field is not None:
-            self._output_field = output_field
+            self.output_field = output_field
 
     def get_db_converters(self, connection):
         return [self.convert_value] + self.output_field.get_db_converters(connection)
@@ -222,21 +223,23 @@ class BaseExpression:
     @cached_property
     def output_field(self):
         """Return the output type of this expressions."""
-        if self._output_field_or_none is None:
-            raise FieldError("Cannot resolve expression type, unknown output_field")
-        return self._output_field_or_none
+        output_field = self._resolve_output_field()
+        if output_field is None:
+            self._output_field_resolved_to_none = True
+            raise FieldError('Cannot resolve expression type, unknown output_field')
+        return output_field
 
     @cached_property
     def _output_field_or_none(self):
         """
-        Return the output field of this expression, or None if no output type
-        can be resolved. Note that the 'output_field' property will raise
-        FieldError if no type can be resolved, but this attribute allows for
-        None values.
+        Return the output field of this expression, or None if
+        _resolve_output_field() didn't return an output type.
         """
-        if self._output_field is None:
-            self._resolve_output_field()
-        return self._output_field
+        try:
+            return self.output_field
+        except FieldError:
+            if not self._output_field_resolved_to_none:
+                raise
 
     def _resolve_output_field(self):
         """
@@ -248,24 +251,17 @@ class BaseExpression:
         the type here is a convenience for the common case. The user should
         supply their own output_field with more complex computations.
 
-        If a source does not have an `_output_field` then we exclude it from
-        this check. If all sources are `None`, then an error will be thrown
-        higher up the stack in the `output_field` property.
+        If a source's output field resolves to None, exclude it from this check.
+        If all sources are None, then an error is raised higher up the stack in
+        the output_field property.
         """
-        if self._output_field is None:
-            sources = self.get_source_fields()
-            num_sources = len(sources)
-            if num_sources == 0:
-                self._output_field = None
-            else:
-                for source in sources:
-                    if self._output_field is None:
-                        self._output_field = source
-                    if source is not None and not isinstance(self._output_field, source.__class__):
-                        raise FieldError(
-                            "Expression contains mixed types. You must set output_field")
+        sources_iter = (source for source in self.get_source_fields() if source is not None)
+        for output_field in sources_iter:
+            if any(not isinstance(output_field, source.__class__) for source in sources_iter):
+                raise FieldError('Expression contains mixed types. You must set output_field.')
+            return output_field
 
-    def convert_value(self, value, expression, connection, context):
+    def convert_value(self, value, expression, connection):
         """
         Expressions provide their own converters because users have the option
         of manually specifying the output_field which may be a different type
@@ -296,9 +292,7 @@ class BaseExpression:
         return clone
 
     def copy(self):
-        c = copy.copy(self)
-        c.copied = True
-        return c
+        return copy.copy(self)
 
     def get_group_by_cols(self):
         if not self.contains_aggregate:
@@ -535,10 +529,15 @@ class Func(Expression):
 
     def __repr__(self):
         args = self.arg_joiner.join(str(arg) for arg in self.source_expressions)
-        extra = ', '.join(str(key) + '=' + str(val) for key, val in self.extra.items())
+        extra = dict(self.extra, **self._get_repr_options())
         if extra:
+            extra = ', '.join(str(key) + '=' + str(val) for key, val in sorted(extra.items()))
             return "{}({}, {})".format(self.__class__.__name__, args, extra)
         return "{}({})".format(self.__class__.__name__, args)
+
+    def _get_repr_options(self):
+        """Return a dict of extra __init__() options to include in the repr."""
+        return {}
 
     def get_source_expressions(self):
         return self.source_expressions
@@ -577,11 +576,9 @@ class Func(Expression):
 
     def as_sqlite(self, compiler, connection, **extra_context):
         sql, params = self.as_sql(compiler, connection, **extra_context)
-        try:
+        with suppress(FieldError):
             if self.output_field.get_internal_type() == 'DecimalField':
                 sql = 'CAST(%s AS NUMERIC)' % sql
-        except FieldError:
-            pass
         return sql, params
 
     def copy(self):
@@ -611,14 +608,14 @@ class Value(Expression):
     def as_sql(self, compiler, connection):
         connection.ops.check_expression_support(self)
         val = self.value
-        # check _output_field to avoid triggering an exception
-        if self._output_field is not None:
+        output_field = self._output_field_or_none
+        if output_field is not None:
             if self.for_save:
-                val = self.output_field.get_db_prep_save(val, connection=connection)
+                val = output_field.get_db_prep_save(val, connection=connection)
             else:
-                val = self.output_field.get_db_prep_value(val, connection=connection)
-            if hasattr(self._output_field, 'get_placeholder'):
-                return self._output_field.get_placeholder(val, compiler, connection), [val]
+                val = output_field.get_db_prep_value(val, connection=connection)
+            if hasattr(output_field, 'get_placeholder'):
+                return output_field.get_placeholder(val, compiler, connection), [val]
         if val is None:
             # cx_Oracle does not always convert None to the appropriate
             # NULL type (like in case expressions using numbers), so we
@@ -640,7 +637,7 @@ class DurationValue(Value):
         connection.ops.check_expression_support(self)
         if connection.features.has_native_duration_field:
             return super().as_sql(compiler, connection)
-        return connection.ops.date_interval_sql(self.value)
+        return connection.ops.date_interval_sql(self.value), []
 
 
 class RawSQL(Expression):
@@ -660,7 +657,7 @@ class RawSQL(Expression):
         return [self]
 
     def __hash__(self):
-        h = hash(self.sql) ^ hash(self._output_field)
+        h = hash(self.sql) ^ hash(self.output_field)
         for param in self.params:
             h ^= hash(param)
         return h
@@ -972,7 +969,7 @@ class Subquery(Expression):
         clone.queryset.query = clone.queryset.query.relabeled_clone(change_map)
         clone.queryset.query.external_aliases.update(
             alias for alias in change_map.values()
-            if alias not in clone.queryset.query.tables
+            if alias not in clone.queryset.query.alias_map
         )
         return clone
 
@@ -984,7 +981,6 @@ class Subquery(Expression):
 
         template = template or template_params.get('template', self.template)
         sql = template % template_params
-        sql = connection.ops.unification_cast_sql(self.output_field) % sql
         return sql, sql_params
 
     def _prepare(self, output_field):
@@ -1007,7 +1003,7 @@ class Exists(Subquery):
         super().__init__(*args, **kwargs)
 
     def __invert__(self):
-        return type(self)(self.queryset, self.output_field, negated=(not self.negated), **self.extra)
+        return type(self)(self.queryset, negated=(not self.negated), **self.extra)
 
     @property
     def output_field(self):

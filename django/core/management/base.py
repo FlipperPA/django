@@ -5,6 +5,7 @@ be executed through ``django-admin`` or ``manage.py``).
 import os
 import sys
 from argparse import ArgumentParser
+from contextlib import suppress
 from io import TextIOBase
 
 import django
@@ -12,7 +13,6 @@ from django.core import checks
 from django.core.exceptions import ImproperlyConfigured
 from django.core.management.color import color_style, no_style
 from django.db import DEFAULT_DB_ALIAS, connections
-from django.db.migrations.exceptions import MigrationSchemaMissing
 
 
 class CommandError(Exception):
@@ -183,6 +183,10 @@ class BaseCommand:
         that is locale-sensitive and such content shouldn't contain any
         translations (like it happens e.g. with django.contrib.auth
         permissions) as activating any locale might cause unintended effects.
+
+    ``stealth_options``
+        A tuple of any options the command uses which aren't defined by the
+        argument parser.
     """
     # Metadata about this command.
     help = ''
@@ -193,6 +197,11 @@ class BaseCommand:
     leave_locale_alone = False
     requires_migrations_checks = False
     requires_system_checks = True
+    # Arguments, common to all commands, which aren't defined by the argument
+    # parser.
+    base_stealth_options = ('skip_checks', 'stderr', 'stdout')
+    # Command-specific options not defined by the argument parser.
+    stealth_options = ()
 
     def __init__(self, stdout=None, stderr=None, no_color=False):
         self.stdout = OutputWrapper(stdout or sys.stdout)
@@ -289,12 +298,10 @@ class BaseCommand:
                 self.stderr.write('%s: %s' % (e.__class__.__name__, e))
             sys.exit(1)
         finally:
-            try:
+            # Ignore if connections aren't setup at this point (e.g. no
+            # configured settings).
+            with suppress(ImproperlyConfigured):
                 connections.close_all()
-            except ImproperlyConfigured:
-                # Ignore if connections aren't setup at this point (e.g. no
-                # configured settings).
-                pass
 
     def execute(self, *args, **options):
         """
@@ -420,15 +427,10 @@ class BaseCommand:
         except ImproperlyConfigured:
             # No databases are configured (or the dummy one)
             return
-        except MigrationSchemaMissing:
-            self.stdout.write(self.style.NOTICE(
-                "\nNot checking migrations as it is not possible to access/create the django_migrations table."
-            ))
-            return
 
         plan = executor.migration_plan(executor.loader.graph.leaf_nodes())
         if plan:
-            apps_waiting_migration = sorted(set(migration.app_label for migration, backwards in plan))
+            apps_waiting_migration = sorted({migration.app_label for migration, backwards in plan})
             self.stdout.write(
                 self.style.NOTICE(
                     "\nYou have %(unpplied_migration_count)s unapplied migration(s). "

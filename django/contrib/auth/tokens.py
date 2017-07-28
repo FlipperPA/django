@@ -11,6 +11,7 @@ class PasswordResetTokenGenerator:
     reset mechanism.
     """
     key_salt = "django.contrib.auth.tokens.PasswordResetTokenGenerator"
+    secret = settings.SECRET_KEY
 
     def make_token(self, user):
         """
@@ -41,7 +42,7 @@ class PasswordResetTokenGenerator:
             return False
 
         # Check the timestamp is within limit
-        if (self._num_days(self._today()) - ts) > settings.PASSWORD_RESET_TIMEOUT_DAYS:
+        if (self._num_days(self._today()) - ts) >= settings.PASSWORD_RESET_TIMEOUT_DAYS:
             return False
 
         return True
@@ -61,6 +62,7 @@ class PasswordResetTokenGenerator:
         hash = salted_hmac(
             self.key_salt,
             self._make_hash_value(user, timestamp),
+            secret=self.secret,
         ).hexdigest()[::2]
         return "%s-%s" % (ts_b36, hash)
 

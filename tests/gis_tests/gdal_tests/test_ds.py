@@ -1,66 +1,70 @@
 import os
+import re
 import unittest
-from unittest import skipUnless
 
-from django.contrib.gis.gdal import HAS_GDAL
+from django.contrib.gis.gdal import (
+    GDAL_VERSION, DataSource, Envelope, GDALException, OGRGeometry,
+    OGRIndexError,
+)
+from django.contrib.gis.gdal.field import OFTInteger, OFTReal, OFTString
 
 from ..test_data import TEST_DATA, TestDS, get_ds_file
 
-if HAS_GDAL:
-    from django.contrib.gis.gdal import DataSource, Envelope, OGRGeometry, GDALException, OGRIndexError, GDAL_VERSION
-    from django.contrib.gis.gdal.field import OFTReal, OFTInteger, OFTString
+wgs_84_wkt = (
+    'GEOGCS["GCS_WGS_1984",DATUM["WGS_1984",SPHEROID["WGS_1984",'
+    '6378137,298.257223563]],PRIMEM["Greenwich",0],UNIT["Degree",'
+    '0.017453292519943295]]'
+)
+# Using a regex because of small differences depending on GDAL versions.
+# AUTHORITY part has been added in GDAL 2.2.
+wgs_84_wkt_regex = (
+    r'^GEOGCS\["GCS_WGS_1984",DATUM\["WGS_1984",SPHEROID\["WGS_(19)?84",'
+    r'6378137,298.257223563\]\],PRIMEM\["Greenwich",0\],UNIT\["Degree",'
+    r'0.017453292519943295\](,AUTHORITY\["EPSG","4326"\])?\]$'
+)
 
-    # List of acceptable data sources.
-    ds_list = (
-        TestDS(
-            'test_point', nfeat=5, nfld=3, geom='POINT', gtype=1, driver='ESRI Shapefile',
-            fields={'dbl': OFTReal, 'int': OFTInteger, 'str': OFTString},
-            extent=(-1.35011, 0.166623, -0.524093, 0.824508),  # Got extent from QGIS
-            srs_wkt=(
-                'GEOGCS["GCS_WGS_1984",DATUM["WGS_1984",SPHEROID["WGS_1984",'
-                '6378137,298.257223563]],PRIMEM["Greenwich",0],UNIT["Degree",'
-                '0.017453292519943295]]'
-            ),
-            field_values={
-                'dbl': [float(i) for i in range(1, 6)],
-                'int': list(range(1, 6)),
-                'str': [str(i) for i in range(1, 6)],
-            },
-            fids=range(5)
-        ),
-        TestDS(
-            'test_vrt', ext='vrt', nfeat=3, nfld=3, geom='POINT', gtype='Point25D',
-            driver='OGR_VRT' if GDAL_VERSION >= (2, 0) else 'VRT',
-            fields={
-                'POINT_X': OFTString,
-                'POINT_Y': OFTString,
-                'NUM': OFTString,
-            },  # VRT uses CSV, which all types are OFTString.
-            extent=(1.0, 2.0, 100.0, 523.5),  # Min/Max from CSV
-            field_values={
-                'POINT_X': ['1.0', '5.0', '100.0'],
-                'POINT_Y': ['2.0', '23.0', '523.5'],
-                'NUM': ['5', '17', '23'],
-            },
-            fids=range(1, 4)
-        ),
-        TestDS(
-            'test_poly', nfeat=3, nfld=3, geom='POLYGON', gtype=3,
-            driver='ESRI Shapefile',
-            fields={'float': OFTReal, 'int': OFTInteger, 'str': OFTString},
-            extent=(-1.01513, -0.558245, 0.161876, 0.839637),  # Got extent from QGIS
-            srs_wkt=(
-                'GEOGCS["GCS_WGS_1984",DATUM["WGS_1984",SPHEROID["WGS_1984",'
-                '6378137,298.257223563]],PRIMEM["Greenwich",0],UNIT["Degree",'
-                '0.017453292519943295]]'
-            ),
-        )
+# List of acceptable data sources.
+ds_list = (
+    TestDS(
+        'test_point', nfeat=5, nfld=3, geom='POINT', gtype=1, driver='ESRI Shapefile',
+        fields={'dbl': OFTReal, 'int': OFTInteger, 'str': OFTString},
+        extent=(-1.35011, 0.166623, -0.524093, 0.824508),  # Got extent from QGIS
+        srs_wkt=wgs_84_wkt,
+        field_values={
+            'dbl': [float(i) for i in range(1, 6)],
+            'int': list(range(1, 6)),
+            'str': [str(i) for i in range(1, 6)],
+        },
+        fids=range(5)
+    ),
+    TestDS(
+        'test_vrt', ext='vrt', nfeat=3, nfld=3, geom='POINT', gtype='Point25D',
+        driver='OGR_VRT' if GDAL_VERSION >= (2, 0) else 'VRT',
+        fields={
+            'POINT_X': OFTString,
+            'POINT_Y': OFTString,
+            'NUM': OFTString,
+        },  # VRT uses CSV, which all types are OFTString.
+        extent=(1.0, 2.0, 100.0, 523.5),  # Min/Max from CSV
+        field_values={
+            'POINT_X': ['1.0', '5.0', '100.0'],
+            'POINT_Y': ['2.0', '23.0', '523.5'],
+            'NUM': ['5', '17', '23'],
+        },
+        fids=range(1, 4)
+    ),
+    TestDS(
+        'test_poly', nfeat=3, nfld=3, geom='POLYGON', gtype=3,
+        driver='ESRI Shapefile',
+        fields={'float': OFTReal, 'int': OFTInteger, 'str': OFTString},
+        extent=(-1.01513, -0.558245, 0.161876, 0.839637),  # Got extent from QGIS
+        srs_wkt=wgs_84_wkt,
     )
+)
 
 bad_ds = (TestDS('foo'),)
 
 
-@skipUnless(HAS_GDAL, "GDAL is required")
 class DataSourceTest(unittest.TestCase):
 
     def test01_valid_shp(self):
@@ -122,11 +126,9 @@ class DataSourceTest(unittest.TestCase):
                     layer.__getitem__(50000)
 
                 if hasattr(source, 'field_values'):
-                    fld_names = source.field_values.keys()
-
                     # Testing `Layer.get_fields` (which uses Layer.__iter__)
-                    for fld_name in fld_names:
-                        self.assertEqual(source.field_values[fld_name], layer.get_fields(fld_name))
+                    for fld_name, fld_value in source.field_values.items():
+                        self.assertEqual(fld_value, layer.get_fields(fld_name))
 
                     # Testing `Layer.__getitem__`.
                     for i, fid in enumerate(source.fids):
@@ -134,8 +136,8 @@ class DataSourceTest(unittest.TestCase):
                         self.assertEqual(fid, feat.fid)
                         # Maybe this should be in the test below, but we might as well test
                         # the feature values here while in this loop.
-                        for fld_name in fld_names:
-                            self.assertEqual(source.field_values[fld_name][i], feat.get(fld_name))
+                        for fld_name, fld_value in source.field_values.items():
+                            self.assertEqual(fld_value[i], feat.get(fld_name))
 
     def test03b_layer_slice(self):
         "Test indexing and slicing on Layers."
@@ -196,7 +198,7 @@ class DataSourceTest(unittest.TestCase):
 
                     # Testing Feature.__iter__
                     for fld in feat:
-                        self.assertIn(fld.name, source.fields.keys())
+                        self.assertIn(fld.name, source.fields)
 
     def test05_geometries(self):
         "Testing Geometries from Data Source Features."
@@ -214,11 +216,7 @@ class DataSourceTest(unittest.TestCase):
 
                     # Making sure the SpatialReference is as expected.
                     if hasattr(source, 'srs_wkt'):
-                        self.assertEqual(
-                            source.srs_wkt,
-                            # Depending on lib versions, WGS_84 might be WGS_1984
-                            g.srs.wkt.replace('SPHEROID["WGS_84"', 'SPHEROID["WGS_1984"')
-                        )
+                        self.assertIsNotNone(re.match(wgs_84_wkt_regex, g.srs.wkt))
 
     def test06_spatial_filter(self):
         "Testing the Layer.spatial_filter property."

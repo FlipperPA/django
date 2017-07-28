@@ -69,6 +69,7 @@ class Book(models.Model):
 class Promo(models.Model):
     name = models.CharField(max_length=100, verbose_name='¿Name?')
     book = models.ForeignKey(Book, models.CASCADE)
+    author = models.ForeignKey(User, models.SET_NULL, blank=True, null=True)
 
     def __str__(self):
         return self.name
@@ -90,6 +91,7 @@ class Chapter(models.Model):
 class ChapterXtra1(models.Model):
     chap = models.OneToOneField(Chapter, models.CASCADE, verbose_name='¿Chap?')
     xtra = models.CharField(max_length=100, verbose_name='¿Xtra?')
+    guest_author = models.ForeignKey(User, models.SET_NULL, blank=True, null=True)
 
     def __str__(self):
         return '¿Xtra1: %s' % self.xtra
@@ -571,6 +573,13 @@ class Topping(models.Model):
 class Pizza(models.Model):
     name = models.CharField(max_length=20)
     toppings = models.ManyToManyField('Topping', related_name='pizzas')
+
+
+# Pizza's ModelAdmin has readonly_fields = ['toppings'].
+# toppings is editable for this model's admin.
+class ReadablePizza(Pizza):
+    class Meta:
+        proxy = True
 
 
 class Album(models.Model):

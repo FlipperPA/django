@@ -39,6 +39,10 @@ class ModelAdminTests(TestCase):
         )
         self.site = AdminSite()
 
+    def test_modeladmin_str(self):
+        ma = ModelAdmin(Band, self.site)
+        self.assertEqual(str(ma), 'modeladmin.ModelAdmin')
+
     # form/fields/fieldsets interaction ##############################
 
     def test_default_fields(self):
@@ -221,7 +225,7 @@ class ModelAdminTests(TestCase):
             name = forms.CharField()
 
             class Meta:
-                exclude = tuple()
+                exclude = ()
                 model = Band
 
         class BandAdmin(ModelAdmin):

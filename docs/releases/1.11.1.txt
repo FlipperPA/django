@@ -2,9 +2,19 @@
 Django 1.11.1 release notes
 ===========================
 
-*Under development*
+*May 6, 2017*
 
-Django 1.11.1 fixes several bugs in 1.11.
+Django 1.11.1 adds a minor feature and fixes several bugs in 1.11.
+
+Allowed disabling server-side cursors on PostgreSQL
+===================================================
+
+The change in Django 1.11 to make :meth:`.QuerySet.iterator()` use server-side
+cursors on PostgreSQL prevents running Django with `pgBouncer` in transaction
+pooling mode. To reallow that, use the :setting:`DISABLE_SERVER_SIDE_CURSORS
+<DATABASE-DISABLE_SERVER_SIDE_CURSORS>` setting in :setting:`DATABASES`.
+
+See :ref:`transaction-pooling-server-side-cursors` for more discussion.
 
 Bugfixes
 ========
@@ -84,3 +94,19 @@ Bugfixes
 
 * Fixed crash in  ``BaseInlineFormSet._construct_form()`` when using
   ``save_as_new`` (:ticket:`28159`).
+
+* Fixed a regression where ``Model._state.db`` wasn't set correctly on
+  multi-table inheritance parent models after saving a child model
+  (:ticket:`28166`).
+
+* Corrected the return type of ``ArrayField(CITextField())`` values retrieved
+  from the database (:ticket:`28161`).
+
+* Fixed ``QuerySet.prefetch_related()`` crash when fetching relations in nested
+  ``Prefetch`` objects (:ticket:`27554`).
+
+* Prevented hiding GDAL errors if it's not installed when using ``contrib.gis``
+  (:ticket:`28160`). (It's a required dependency as of Django 1.11.)
+
+* Fixed a regression causing ``__in`` lookups on a foreign key to fail when
+  using the foreign key's parent model as the lookup value (:ticket:`28175`).

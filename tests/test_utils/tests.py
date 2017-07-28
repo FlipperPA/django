@@ -14,7 +14,8 @@ from django.forms import EmailField, IntegerField
 from django.http import HttpResponse
 from django.template.loader import render_to_string
 from django.test import (
-    SimpleTestCase, TestCase, skipIfDBFeature, skipUnlessDBFeature,
+    SimpleTestCase, TestCase, TransactionTestCase, skipIfDBFeature,
+    skipUnlessDBFeature,
 )
 from django.test.html import HTMLParseError, parse_html
 from django.test.utils import (
@@ -157,6 +158,32 @@ class AssertNumQueriesTests(TestCase):
         self.assertNumQueries(2, test_func)
 
 
+@unittest.skipUnless(
+    connection.vendor != 'sqlite' or not connection.is_in_memory_db(),
+    'For SQLite in-memory tests, closing the connection destroys the database.'
+)
+class AssertNumQueriesUponConnectionTests(TransactionTestCase):
+    available_apps = []
+
+    def test_ignores_connection_configuration_queries(self):
+        real_ensure_connection = connection.ensure_connection
+        connection.close()
+
+        def make_configuration_query():
+            is_opening_connection = connection.connection is None
+            real_ensure_connection()
+
+            if is_opening_connection:
+                # Avoid infinite recursion. Creating a cursor calls
+                # ensure_connection() which is currently mocked by this method.
+                connection.cursor().execute('SELECT 1' + connection.features.bare_select_suffix)
+
+        ensure_connection = 'django.db.backends.base.base.BaseDatabaseWrapper.ensure_connection'
+        with mock.patch(ensure_connection, side_effect=make_configuration_query):
+            with self.assertNumQueries(1):
+                list(Car.objects.all())
+
+
 class AssertQuerysetEqualTests(TestCase):
     def setUp(self):
         self.p1 = Person.objects.create(name='p1')
@@ -296,8 +323,10 @@ class AssertNumQueriesContextManagerTests(TestCase):
         with self.assertRaises(AssertionError) as exc_info:
             with self.assertNumQueries(2):
                 Person.objects.count()
-        self.assertIn("1 queries executed, 2 expected", str(exc_info.exception))
-        self.assertIn("Captured queries were", str(exc_info.exception))
+        exc_lines = str(exc_info.exception).split('\n')
+        self.assertEqual(exc_lines[0], '1 != 2 : 1 queries executed, 2 expected')
+        self.assertEqual(exc_lines[1], 'Captured queries were:')
+        self.assertTrue(exc_lines[2].startswith('1.'))  # queries are numbered
 
         with self.assertRaises(TypeError):
             with self.assertNumQueries(4000):

@@ -431,6 +431,18 @@ class AdminFileWidgetTests(TestDataMixin, TestCase):
             '<input type="file" name="test" />',
         )
 
+    def test_render_required(self):
+        widget = widgets.AdminFileWidget()
+        widget.is_required = True
+        self.assertHTMLEqual(
+            widget.render('test', self.album.cover_art),
+            '<p class="file-upload">Currently: <a href="%(STORAGE_URL)salbums/'
+            r'hybrid_theory.jpg">albums\hybrid_theory.jpg</a><br />'
+            'Change: <input type="file" name="test" /></p>' % {
+                'STORAGE_URL': default_storage.url(''),
+            },
+        )
+
     def test_readonly_fields(self):
         """
         File widgets should render as a link when they're marked "read only."
@@ -508,8 +520,8 @@ class ForeignKeyRawIdWidgetTest(TestCase):
         self.assertHTMLEqual(
             w.render('honeycomb_widget', big_honeycomb.pk, attrs={}),
             '<input type="text" name="honeycomb_widget" value="%(hcombpk)s" />'
-            '&nbsp;<strong>Honeycomb object</strong>'
-            % {'hcombpk': big_honeycomb.pk}
+            '&nbsp;<strong>%(hcomb)s</strong>'
+            % {'hcombpk': big_honeycomb.pk, 'hcomb': big_honeycomb}
         )
 
     def test_fk_to_self_model_not_in_admin(self):
@@ -523,8 +535,8 @@ class ForeignKeyRawIdWidgetTest(TestCase):
         self.assertHTMLEqual(
             w.render('individual_widget', subject1.pk, attrs={}),
             '<input type="text" name="individual_widget" value="%(subj1pk)s" />'
-            '&nbsp;<strong>Individual object</strong>'
-            % {'subj1pk': subject1.pk}
+            '&nbsp;<strong>%(subj1)s</strong>'
+            % {'subj1pk': subject1.pk, 'subj1': subject1}
         )
 
     def test_proper_manager_for_label_lookup(self):
@@ -564,14 +576,14 @@ class ManyToManyRawIdWidgetTest(TestCase):
             w.render('test', [m1.pk, m2.pk], attrs={}), (
                 '<input type="text" name="test" value="%(m1pk)s,%(m2pk)s" class="vManyToManyRawIdAdminField" />'
                 '<a href="/admin_widgets/member/" class="related-lookup" id="lookup_id_test" title="Lookup"></a>'
-            ) % dict(m1pk=m1.pk, m2pk=m2.pk)
+            ) % {'m1pk': m1.pk, 'm2pk': m2.pk}
         )
 
         self.assertHTMLEqual(
             w.render('test', [m1.pk]), (
                 '<input type="text" name="test" value="%(m1pk)s" class="vManyToManyRawIdAdminField">'
                 '<a href="/admin_widgets/member/" class="related-lookup" id="lookup_id_test" title="Lookup"></a>'
-            ) % dict(m1pk=m1.pk)
+            ) % {'m1pk': m1.pk}
         )
 
     def test_m2m_related_model_not_in_admin(self):

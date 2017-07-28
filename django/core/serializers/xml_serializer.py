@@ -2,7 +2,6 @@
 XML serializer.
 """
 
-from collections import OrderedDict
 from xml.dom import pulldom
 from xml.sax import handler
 from xml.sax.expatreader import ExpatParser as _ExpatParser
@@ -47,9 +46,9 @@ class Serializer(base.Serializer):
             raise base.SerializationError("Non-model object (%s) encountered during serialization" % type(obj))
 
         self.indent(1)
-        attrs = OrderedDict([("model", str(obj._meta))])
+        attrs = {'model': str(obj._meta)}
         if not self.use_natural_primary_keys or not hasattr(obj, 'natural_key'):
-            obj_pk = obj._get_pk_val()
+            obj_pk = obj.pk
             if obj_pk is not None:
                 attrs['pk'] = str(obj_pk)
 
@@ -68,10 +67,10 @@ class Serializer(base.Serializer):
         ManyToManyFields).
         """
         self.indent(2)
-        self.xml.startElement("field", OrderedDict([
-            ("name", field.name),
-            ("type", field.get_internal_type()),
-        ]))
+        self.xml.startElement('field', {
+            'name': field.name,
+            'type': field.get_internal_type(),
+        })
 
         # Get a "string version" of the object's data.
         if getattr(obj, field.name) is not None:
@@ -79,7 +78,7 @@ class Serializer(base.Serializer):
                 self.xml.characters(field.value_to_string(obj))
             except UnserializableContentError:
                 raise ValueError("%s.%s (pk:%s) contains unserializable characters" % (
-                    obj.__class__.__name__, field.name, obj._get_pk_val()))
+                    obj.__class__.__name__, field.name, obj.pk))
         else:
             self.xml.addQuickElement("None")
 
@@ -130,7 +129,7 @@ class Serializer(base.Serializer):
             else:
                 def handle_m2m(value):
                     self.xml.addQuickElement("object", attrs={
-                        'pk': str(value._get_pk_val())
+                        'pk': str(value.pk)
                     })
             for relobj in getattr(obj, field.name).iterator():
                 handle_m2m(relobj)
@@ -140,11 +139,11 @@ class Serializer(base.Serializer):
     def _start_relational_field(self, field):
         """Output the <field> element for relational fields."""
         self.indent(2)
-        self.xml.startElement("field", OrderedDict([
-            ("name", field.name),
-            ("rel", field.remote_field.__class__.__name__),
-            ("to", str(field.remote_field.model._meta)),
-        ]))
+        self.xml.startElement('field', {
+            'name': field.name,
+            'rel': field.remote_field.__class__.__name__,
+            'to': str(field.remote_field.model._meta),
+        })
 
 
 class Deserializer(base.Deserializer):
