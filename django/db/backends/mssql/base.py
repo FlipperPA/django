@@ -61,8 +61,8 @@ def encode_value(v):
 
 
 class DatabaseWrapper(BaseDatabaseWrapper):
-    vendor = "microsoft"
-    display_name = "SQL Server"
+    vendor = "mssql"
+    display_name = "Microsoft SQL Server via pyodbc"
     # This dictionary maps Field objects to their associated MS SQL column
     # types, as strings. Column-type strings can contain format strings; they'll
     # be interpolated against the values of Field.__dict__ before being output.
