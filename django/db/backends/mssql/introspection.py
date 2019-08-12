@@ -7,8 +7,11 @@ from django.db.backends.base.introspection import (
 )
 from django.db.models.indexes import Index
 
+# What the heck are these values? Just randomly picking one for
+# SQL_SMALLAUTOFIELD
 SQL_AUTOFIELD = -777555
 SQL_BIGAUTOFIELD = -777444
+SQL_SMALLAUTOFIELD = -777555
 
 
 class DatabaseIntrospection(BaseDatabaseIntrospection):
@@ -16,6 +19,7 @@ class DatabaseIntrospection(BaseDatabaseIntrospection):
     data_types_reverse = {
         SQL_AUTOFIELD: "AutoField",
         SQL_BIGAUTOFIELD: "BigAutoField",
+        SQL_SMALLAUTOFIELD: "SmallAutoField",
         Database.SQL_BIGINT: "BigIntegerField",
         # Database.SQL_BINARY:            ,
         Database.SQL_BIT: "BooleanField",
@@ -86,7 +90,8 @@ class DatabaseIntrospection(BaseDatabaseIntrospection):
         return cursor.fetchall()[0][0]
 
     def get_table_description(self, cursor, table_name, identity_check=True):
-        """Returns a description of the table, with DB-API cursor.description interface.
+        """
+        Returns a description of the table, with DB-API cursor.description interface.
 
         The 'auto_check' parameter has been added to the function argspec.
         If set to True, the function will check each of the table's fields for the
@@ -111,6 +116,8 @@ class DatabaseIntrospection(BaseDatabaseIntrospection):
             ):
                 if column[1] == Database.SQL_BIGINT:
                     column[1] = SQL_BIGAUTOFIELD
+                elif column[1] == Database.SQL_SMALLINT:
+                    column[1] = SQL_SMALLAUTOFIELD
                 else:
                     column[1] = SQL_AUTOFIELD
             if column[1] == Database.SQL_WVARCHAR and column[3] < 4000:
@@ -122,8 +129,12 @@ class DatabaseIntrospection(BaseDatabaseIntrospection):
         cursor.execute(
             """
             SELECT c.name FROM sys.columns c
-            INNER JOIN sys.tables t ON c.object_id = t.object_id
-            WHERE t.schema_id = SCHEMA_ID() AND t.name = %s AND c.is_identity = 1""",
+            INNER JOIN sys.tables t
+            ON c.object_id = t.object_id
+            WHERE t.schema_id = SCHEMA_ID()
+            AND t.name = %s
+            AND c.is_identity = 1
+            """,
             [table_name],
         )
         # SQL Server allows only one identity column per table
@@ -133,28 +144,40 @@ class DatabaseIntrospection(BaseDatabaseIntrospection):
 
     def get_relations(self, cursor, table_name):
         """
-        Returns a dictionary of {field_name: (field_name_other_table, other_table)}
+        Returns a dictionary of:
+            {field_name: (field_name_other_table, other_table)}
         representing all relationships to the given table.
         """
-        # CONSTRAINT_COLUMN_USAGE: http://msdn2.microsoft.com/en-us/library/ms174431.aspx
-        # CONSTRAINT_TABLE_USAGE:  http://msdn2.microsoft.com/en-us/library/ms179883.aspx
-        # REFERENTIAL_CONSTRAINTS: http://msdn2.microsoft.com/en-us/library/ms179987.aspx
-        # TABLE_CONSTRAINTS:       http://msdn2.microsoft.com/en-us/library/ms181757.aspx
+        # CONSTRAINT_COLUMN_USAGE:
+        #     http://msdn2.microsoft.com/en-us/library/ms174431.aspx
+        # CONSTRAINT_TABLE_USAGE:
+        #     http://msdn2.microsoft.com/en-us/library/ms179883.aspx
+        # REFERENTIAL_CONSTRAINTS:
+        #     http://msdn2.microsoft.com/en-us/library/ms179987.aspx
+        # TABLE_CONSTRAINTS:
+        #     http://msdn2.microsoft.com/en-us/library/ms181757.aspx
 
         sql = """
-SELECT e.COLUMN_NAME AS column_name,
-  c.TABLE_NAME AS referenced_table_name,
-  d.COLUMN_NAME AS referenced_column_name
-FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS AS a
-INNER JOIN INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS AS b
-  ON a.CONSTRAINT_NAME = b.CONSTRAINT_NAME AND a.TABLE_SCHEMA = b.CONSTRAINT_SCHEMA
-INNER JOIN INFORMATION_SCHEMA.CONSTRAINT_TABLE_USAGE AS c
-  ON b.UNIQUE_CONSTRAINT_NAME = c.CONSTRAINT_NAME AND b.CONSTRAINT_SCHEMA = c.CONSTRAINT_SCHEMA
-INNER JOIN INFORMATION_SCHEMA.CONSTRAINT_COLUMN_USAGE AS d
-  ON c.CONSTRAINT_NAME = d.CONSTRAINT_NAME AND c.CONSTRAINT_SCHEMA = d.CONSTRAINT_SCHEMA
-INNER JOIN INFORMATION_SCHEMA.CONSTRAINT_COLUMN_USAGE AS e
-  ON a.CONSTRAINT_NAME = e.CONSTRAINT_NAME AND a.TABLE_SCHEMA = e.TABLE_SCHEMA
-WHERE a.TABLE_SCHEMA = SCHEMA_NAME() AND a.TABLE_NAME = %s AND a.CONSTRAINT_TYPE = 'FOREIGN KEY'"""
+            SELECT e.COLUMN_NAME AS column_name,
+                c.TABLE_NAME AS referenced_table_name,
+                d.COLUMN_NAME AS referenced_column_name
+            FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS AS a
+            INNER JOIN INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS AS b
+                ON a.CONSTRAINT_NAME = b.CONSTRAINT_NAME
+                AND a.TABLE_SCHEMA = b.CONSTRAINT_SCHEMA
+            INNER JOIN INFORMATION_SCHEMA.CONSTRAINT_TABLE_USAGE AS c
+                ON b.UNIQUE_CONSTRAINT_NAME = c.CONSTRAINT_NAME
+                AND b.CONSTRAINT_SCHEMA = c.CONSTRAINT_SCHEMA
+            INNER JOIN INFORMATION_SCHEMA.CONSTRAINT_COLUMN_USAGE AS d
+                ON c.CONSTRAINT_NAME = d.CONSTRAINT_NAME
+                AND c.CONSTRAINT_SCHEMA = d.CONSTRAINT_SCHEMA
+            INNER JOIN INFORMATION_SCHEMA.CONSTRAINT_COLUMN_USAGE AS e
+                ON a.CONSTRAINT_NAME = e.CONSTRAINT_NAME
+                AND a.TABLE_SCHEMA = e.TABLE_SCHEMA
+            WHERE a.TABLE_SCHEMA = SCHEMA_NAME()
+            AND a.TABLE_NAME = %s
+            AND a.CONSTRAINT_TYPE = 'FOREIGN KEY'
+        """
         cursor.execute(sql, (table_name,))
         return dict(
             [[item[0], (item[2], item[1])] for item in cursor.fetchall()]
@@ -162,19 +185,30 @@ WHERE a.TABLE_SCHEMA = SCHEMA_NAME() AND a.TABLE_NAME = %s AND a.CONSTRAINT_TYPE
 
     def get_key_columns(self, cursor, table_name):
         """
-        Returns a list of (column_name, referenced_table_name, referenced_column_name) for all
-        key columns in given table.
+        Returns a list of:
+            (column_name, referenced_table_name, referenced_column_name)
+        for all key columns in given table.
         """
         key_columns = []
         cursor.execute(
             """
-            SELECT c.name AS column_name, rt.name AS referenced_table_name, rc.name AS referenced_column_name
+            SELECT c.name AS column_name,
+                rt.name AS referenced_table_name,
+                rc.name AS referenced_column_name
             FROM sys.foreign_key_columns fk
-            INNER JOIN sys.tables t ON t.object_id = fk.parent_object_id
-            INNER JOIN sys.columns c ON c.object_id = t.object_id AND c.column_id = fk.parent_column_id
-            INNER JOIN sys.tables rt ON rt.object_id = fk.referenced_object_id
-            INNER JOIN sys.columns rc ON rc.object_id = rt.object_id AND rc.column_id = fk.referenced_column_id
-            WHERE t.schema_id = SCHEMA_ID() AND t.name = %s""",
+            INNER JOIN sys.tables t
+                ON t.object_id = fk.parent_object_id
+            INNER JOIN sys.columns c
+                ON c.object_id = t.object_id
+                AND c.column_id = fk.parent_column_id
+            INNER JOIN sys.tables rt
+                ON rt.object_id = fk.referenced_object_id
+            INNER JOIN sys.columns rc
+                ON rc.object_id = rt.object_id
+                AND rc.column_id = fk.referenced_column_id
+            WHERE t.schema_id = SCHEMA_ID()
+            AND t.name = %s
+            """,
             [table_name],
         )
         key_columns.extend([tuple(row) for row in cursor.fetchall()])

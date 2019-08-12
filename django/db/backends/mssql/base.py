@@ -539,6 +539,8 @@ class CursorWrapper(object):
         try:
             return self.cursor.execute(sql, params)
         except Database.Error as e:
+            print("SQL", sql)
+            print("PARAMS", params)
             self.connection._on_error(e)
             raise
 
